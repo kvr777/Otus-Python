@@ -12,7 +12,7 @@ import re
 import sys
 import configparser
 import gzip
-from collections import defaultdict,OrderedDict
+from collections import defaultdict, OrderedDict
 from statistics import median
 from shutil import copy2
 import time
@@ -21,6 +21,7 @@ import logging
 logging.basicConfig(filename=None, level=logging.INFO,
                     format='[%(asctime)s] %(levelname).1s %(message)s',
                     datefmt='%Y.%m.%d %H:%M:%S')
+
 
 # класс, для возможности получения результатов работы функции с генератором
 class Generator:
@@ -67,7 +68,7 @@ def check_log(log_path):
         return 0, conf
 
 
-def logger_reconfig (config):
+def logger_reconfig(config):
     try:
         if os.path.isdir(config['MAIN']['logging']):
             for handler in logging.root.handlers[:]:
@@ -81,6 +82,7 @@ def logger_reconfig (config):
             return logging.info("Логирование в файл успешно подключено")
     except:
         return None
+
 
 def check_other_reqs(config):
     reqs_glag = True
@@ -172,15 +174,15 @@ def parce_log(config, last_log):
         список из времен загрузки страницы
     """
     if last_log.endswith(".gz"):
-        myFile = gzip.open(os.path.join(config['MAIN']['log_dir'],last_log),'rb')
+        myfile = gzip.open(os.path.join(config['MAIN']['log_dir'], last_log), 'rb')
     else:
         try:
-            myFile = open(os.path.join(config['MAIN']['log_dir'],last_log))
+            myfile = open(os.path.join(config['MAIN']['log_dir'], last_log),  'rb')
         except:
             return False
     time_log = defaultdict(list)
     total = processed = 0
-    for s in myFile:
+    for s in myfile:
         parsed_line, url, response_time = process_line(s)
         total += 1
         if parsed_line:
@@ -190,7 +192,7 @@ def parce_log(config, last_log):
     #         if (total % 500000) == 0:
     #             print("%s of %s lines processed" % (processed, total))
     # print("%s of %s lines processed" % (processed, total))
-    myFile.close()
+    myfile.close()
     return time_log
 
 
@@ -283,7 +285,6 @@ def generate_html_report (filtered_report, config, last_log_date):
     html_report = open(os.path.join(full_rep_path, str('temp_') + last_report_name), 'r', encoding='utf-8')
     html_data = html_report.read()
     html_report.close()
-
 
     # заменяем в переменной с содержимым шаблона отчета строку '$table_json' на данные
     newdata = html_data.replace('$table_json', str(filtered_report))
