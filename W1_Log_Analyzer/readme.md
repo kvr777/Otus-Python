@@ -1,8 +1,9 @@
-# Описание проекта
+# Log Analyzer
 
-Скрипт предназначен для формирования на базе журналов доступа (или лог-файлов) отчетов в формате html. 
-В данных отчета рассчитана необходимая статистика по посещению веб-страниц, а также отобраны страницы, 
-которые посещаются больше всего. Скрипт работает с журналами доступа nginx следующей структуры: 
+This repository contains a script for log files processing and html report generation.
+As an input it gets the nginx log files (file structure is provided below), finds the last file,
+calculates all required statistic and generates an html report
+Input logfile structure is the following:
 * '$remote_addr 
 * $remote_user 
 * $http_x_real_ip [$time_local] "
@@ -15,33 +16,36 @@
 * "$http_X_RB_USER" '
 * '$request_time';
 
-## Начало работы
+## Getting Started
 
-Для начала работы необходимо скопировать следующие файлы:
-1. log_analyzer.py - сам скрипт. В качестве параметра можно передавать полный путь к конфигурационному файлу (путь + файл)
-2. log_analyzer.conf - образец конф.файла. Обязательными параметрами являются:
-    * REPORT_SIZE - минимальное суммарное время посещения страницы. Записи со значением ниже не будут попадать в отчет
-    * REPORT_DIR - каталог в котором должны храниться формируемые отчеты. Результат работы скрипта
-    * LOG_DIR - каталог из которого берутся журналы доступа, источник данных для скрипта
-    * LOGGING - каталог, в который записывается лог работы скрипта. Необязательный параметр. В случае отсутствия, лог выводится на экран
-    * TSFILE - каталог в котором хранится файл-метка с временем окончания последней успешной сессии скрипта. Необязательный параметр. В случае отсутствия, выводится на экран
-3. report.html Шаблон отчета. Обязательно должен находиться в каталоге со скриптом
-4. jquery.tablesorter.min.js Файл, который необходим для корректного отображения отчета. Должен быть скопирован в каталог отчетов
+At the first step it is necessary to copy and configure the following files:
+1. log_analyzer.py - main script. Take --config as an optional parameter (please place full path + path name).
+After copying this script it is necessary to setup initial configuration parameters inside the script (var "config", see parameters description below)
+2. log_analyzer.conf - configuration file. You have to copy it in the directory with script file. File can be empty but
+if it contains parameters with values they have priority under default config values. Also it is possible to put the conf file path as
+with such as an --config parameter. In this case file located in this path has the highest priority. Config parameters are:
+    * REPORT_SIZE - parameter to filter report data. Only urls with total request time > report_size are selected
+    * REPORT_DIR - directory where reports are stored
+    * LOG_DIR - directory with logfiles. These files are source for the script
+    * LOGGING - directory where we store the file with all events occurred during the script execution
+    * TSFILE - directory where special ts-file is stored. This file contains the timestamp when last html report was generated
+3. report.html report template. You have to copy it in the directory with script file.
+4. jquery.tablesorter.min.js js-script to process properly html reports. You have to copy it in the directory with reports.
 
-Перед началом запуска скрипта необходимо убедиться, что все файлы присутствуют, в конфигурационном файле прописаны корректные параметры
 
-### Системные требования
+### Prerequisites
 
-Для корректной работы должен быть установлен Python версии 3.6 и выше
+ Python version 3.6 and above
 
-### Установка
-Специальной установки не требуется, с репозитория должны быть скопированы файлы в соответствии с инструкциями раздела "Начало работы"
+### Installing
 
-## Тесты
+No special installation procedure is required. You have to copy and setup the files from this repository as it was described above
+
+## Running the tests
 
 TBA 
 
 
-## Лицензия
+## License
 
-Для данного проекта применяется лицензия MIT
+This project is licensed under the MIT License

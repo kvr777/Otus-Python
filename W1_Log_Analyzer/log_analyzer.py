@@ -9,7 +9,7 @@
 
 import os
 import re
-import sys
+import argparse
 import configparser
 import gzip
 from collections import defaultdict, OrderedDict
@@ -18,208 +18,123 @@ from shutil import copy2
 import time
 import logging
 
-logging.basicConfig(filename=None, level=logging.INFO,
-                    format='[%(asctime)s] %(levelname).1s %(message)s',
-                    datefmt='%Y.%m.%d %H:%M:%S')
+config = {
+    "REPORT_SIZE": 555,
+    "REPORT_DIR": "./reports",
+    "LOG_DIR": "./log",
+    "LOGGING": "./monitoring",
+    "TSFILE": "./monitoring"
+    }
 
 
-# класс, для возможности получения результатов работы функции с генератором
-class Generator:
-    def __init__(self, gen):
-        self.gen = gen
+def parse_config (config, config_path):
+    # update default config from file
+    file_config = configparser.ConfigParser()
+    file_config.read(config_path)
+    file_conf_args = [key for key in file_config['MAIN']]
+    for file_conf_arg in file_conf_args:
+        config[file_conf_arg.upper()] = file_config['MAIN'][file_conf_arg]
 
-    def __iter__(self):
-        self.value = yield from self.gen
+    # parse config
+    try:
+        report_size, report_dir, log_dir, logging_dir, ts_file_dir = int(config['REPORT_SIZE']), \
+                                                                     config['REPORT_DIR'], \
+                                                                     config['LOG_DIR'], \
+                                                                     config['LOGGING'], \
+                                                                     config['TSFILE']
+        return report_size, report_dir, log_dir, logging_dir, ts_file_dir
+    except:
+        raise
 
 
-def check_log(log_path):
-    """ Проверка существования пути к конф.файлу и наличия обязательных
-    параметров. Под обязательными принимаются параметры в переменной
-    conf_mandatory_args
+def find_last_log(log_dir):
+    """ Searching last log file. This file start with mask 'nginx-access-ui.log-' and contains the date in name.
+    This date has a format YYYYMMDD.
 
     Args:
-        log_path: путь к конфигурационному файлу
+        log_dir: Directory path with log files
 
     Returns:
-        Код статуса: [0 - не найден конфигурационный файл
-                      1- конфигурационный файл найден, но обязательные параметры не прочитать
-                      2 - найден конфигурационный файл и обязательные параметры соответсвуют требованиям]
-        config: При статусе 2 передается считанный кофигурационный файл, при прочих статусах пустое значение
+        last_log: the file name with the latest date
+        last_log_date: the date in the found log file (as a string and in format YYYYMMDD
     """
 
-    conf = {}
-
-    try:
-        config = configparser.ConfigParser()
-        config.read(log_path)
-        conf_curr_args = [key for key in config['MAIN']]
-        conf_mandatory_args = ['report_size', 'report_dir', 'log_dir']
-        flag_params = set(conf_mandatory_args).issubset(set(conf_curr_args))
-        if flag_params:
-            if os.path.isdir(config['MAIN']['report_dir']) & \
-                    os.path.isdir(config['MAIN']['log_dir']) & \
-                    (int(config['MAIN']['report_size']) >= 0):
-                return 2, config
-            else:
-                return 1, conf
-        else:
-            return 1, conf
-    except:
-        return 0, conf
-
-
-def logger_reconfig(config):
-    try:
-        if os.path.isdir(config['MAIN']['logging']):
-            for handler in logging.root.handlers[:]:
-                logging.root.removeHandler(handler)
-                logging.basicConfig(handlers=
-                                    [logging.FileHandler(os.path.join(config['MAIN']['logging'], 'log_analyzer.log'),
-                                                         'w', 'utf-8')],
-                                    level=logging.INFO,
-                                    format='[%(asctime)s] %(levelname).1s %(message)s',
-                                    datefmt='%Y.%m.%d %H:%M:%S')
-            return logging.info("Логирование в файл успешно подключено")
-    except:
-        return None
-
-
-def check_other_reqs(config):
-    reqs_glag = True
-    if not os.path.isfile(os.path.join(config['MAIN']['report_dir'], 'jquery.tablesorter.min.js')):
-        logging.warning("В папке c отчетами нет файла 'jquery.tablesorter.min.js'."
-                        "Для корректной работы отчетов потребуется установить данный файл ")
-    if sys.version_info < (3, 6):
-        logging.error("Версия Python ниже 3.6 возможны ошибки при дальнейшей работе")
-        reqs_glag = False
-    if not os.path.isfile("report.html"):
-        logging.error("В папке нет шаблона отчета. Работа будет остановлена")
-        reqs_glag = False
-    return reqs_glag
-
-
-def find_last_log(config):
-    """ Поиск последнего файла в каталоге логов. Поиск идет по дате в названии
-    и с учетом маски заданной маски в имени 'nginx-access-ui.log-'
-
-    Args:
-        config: данные из конфигурационного файла с именем каталога где хранятся логи
-
-    Returns:
-        last_log: имя файла с наибольшей датой в названии
-        last_log_date: наибольшая дата из названия файла
-    """
-
-    # формируем список файлов в каталоге с нужной маской
+    # find the log files by mask in name. Then select one with the last date
     mask = 'nginx-access-ui.log-'
-    log_files_list = []
 
-    for file in os.listdir(config['MAIN']['log_dir']):
-        if file.startswith(mask):
-            log_files_list.append(file)
-
-    # находим последний по дате в названии
     last_log = None
     last_log_date = 0
 
-    for l in log_files_list:
-        log_temp = re.search('nginx-access-ui.log-(\d{4}\d{2}\d{2})\.?', l)
-        if log_temp is not None:
-            if int(log_temp.group(1)) > last_log_date:
-                last_log = l
-                last_log_date = int(log_temp.group(1))
+    for file in os.listdir(log_dir):
+        if file.startswith(mask):
+            log_temp = re.search(str(mask)+'(\d{4}\d{2}\d{2})\.?', file)
+            if log_temp is not None:
+                if int(log_temp.group(1)) > last_log_date:
+                    last_log = file
+                    last_log_date = int(log_temp.group(1))
 
-    last_report_name = 'report_' + str(last_log_date) + '.html'
-    full_rep_path = os.path.abspath(config['MAIN']['report_dir'])
-
-    report_exist = os.path.isfile(os.path.join(full_rep_path, last_report_name))
-
-    return last_log, last_log_date, report_exist
+    return last_log, last_log_date
 
 
-def process_line(line):
-    """ Функуция для получения параметров url и время запроса из
-    одной строки журнала доступа. Если строка получена (длина больше 1),
-    то данная строка разбивается и соответствующие записи
-    (7 и последняя позиция) записываются в журнал time_log (url - ключ)
+def parse_log(log_dir, last_log):
+    """ This func retrieve an url and its request time
+    At the first step, depending on file format, we select a function for file opening (gz or standard).
+    Then we process each line of the log and retrieve url(7-th column) and time (the last column) from the log.
     Args:
-        line: одна строка из журнала доступа
-    Returns:
-        True/False обработана или нет строка
-        url - url из обработанной строки (если строка не обработана пустое значение)
-        response_time - время загрузки страницы (если строка не обработана пустое значение)
-    """
-    if len(line) > 1:
-        try:
-            splitted = line.split()
-            url = splitted[6].decode("utf-8")
-            response_time = splitted[-1].decode("utf-8")
-            return True, url, response_time
-        except:
-            return False, None, None
-    else:
-        return False, None, None
-
-
-def parce_log(config, last_log):
-    """ Функуция для получения параметров url и время запроса из журнала
-    доступа. Сначала, в зависимости от формата файла лога идет открытие либо стандартным способом,
-    либо через обработчик gz. Затем через итератор последовательая отработка строк.
-    Args:
-        config: данные из конфигурационного файла с именем каталога где хранятся логи
-        last_log: имя файла с наибольшей датой в названии
+        log_dir: log directory
+        last_log: log with the latest date in the name
 
     Returns:
-        time_log: словарь в котором код - url из журнала, а значения сгруппированный по коду
-        список из времен загрузки страницы
+        time_log: dict with url as a key and list of times as a values
     """
     if last_log.endswith(".gz"):
-        myfile = gzip.open(os.path.join(config['MAIN']['log_dir'], last_log), 'rb')
+        myfile = gzip.open(os.path.join(log_dir, last_log), 'rb')
     else:
         try:
-            myfile = open(os.path.join(config['MAIN']['log_dir'], last_log),  'rb')
+            myfile = open(os.path.join(log_dir, last_log),  'rb')
         except:
-            return False
+            logging.error("An Error Occurred While Opening the Log File")
+            raise
     time_log = defaultdict(list)
-    total = processed = 0
-    for s in myfile:
-        parsed_line, url, response_time = process_line(s)
-        total += 1
-        if parsed_line:
-            time_log[url].append(response_time)
-            processed += 1
-            yield parsed_line
-    #         if (total % 500000) == 0:
-    #             print("%s of %s lines processed" % (processed, total))
-    # print("%s of %s lines processed" % (processed, total))
+    for line in myfile.readlines():
+        splitted = line.split()
+        url = splitted[6].decode("utf-8")
+        response_time = splitted[-1].decode("utf-8")
+        time_log[url].append(response_time)
+    # Closes the file
     myfile.close()
     return time_log
 
 
-def create_report(time_log, config):
+def create_report(time_log, report_size):
 
-    """ Функуция для формирования отчета с рассчитанной статистикой сначала по всем записям считается общее кол-во
-    обращений к страницам и суммарное время загрузки всех страниц по всем обращениям. Далее последовательно для каждой
-    страницы считается остальная статистика - суммарное время загрузки данной страницы по всем заходам,
-    кол-во заходов на страницу, процент заходов на данную страницу от общих заходов на все страницы,
-    среднее время загрузки страницы, максимальное и медианное время загрузки, процент суммарного времени всех загрузок
-    данной страницы от суммарного времени загрузок всех страниц
-    Далее строки отчета фильтруются по параметру- трешхолду на суммарное время загрузок страницы, по данному же полю
-    устанавливается сортировка по убыванию и записи сохраняются в тот вид, который затем удобно передавать в шаблон
+    """ This function generates the data which have to placed in html report
+    At the first step we calculate the aggregated statistic for all urls:
+        total number of pages' visits
+        total time to process requests for all pages
+    Then, line by line we calculate necessary statistic by every url:
+        total time to process requests for this url
+        total number of url's visits
+        % of number url's visits to number of all pages' visits
+        average, max and median time to process requests for this url
+        % of total time to process requests for this url  to total request time for all pages
+    After, we apply the filter by report_size parameter. Only urls with total request time > report_size are selected.
+    For this column we apply descending sorting as well.
+    Finally we save report data in the format which is suitable for placing in html template
 
     Args:
-        config: данные из конфигурационного файла с именем каталога где хранятся логи
-        time_log: словарь в котором код - url из журнала, а значения сгруппированный по коду
+        report_size: parameter to filter report data. Only urls with total request time > report_size are selected
+        time_log: dict with url as a key and list of times as a values
 
     Returns:
-        filtered_report: сформированные данные для последующей передачи в html отчет
+        filtered_report: data which have to be placed in html report
     """
 
-    # считаем глобальные сумму и кол-во записей в логе
+    # calculate the statistic for all urls
     total_count = sum([len(v) for (k, v) in time_log.items()])
     total_sum = sum([sum([float(x) for x in v]) for (k, v) in time_log.items()])
 
-    # создание отчета в виде словаря, где ключ это страница, а значения - целевые показатели отчета
+    # create report as a dict. The key is an url, values is the target statistic for the report
     report = defaultdict(list)
     for log, times in time_log.items():
         time_sum = sum([float(x) for x in times])
@@ -237,12 +152,11 @@ def create_report(time_log, config):
         report[log].append(round(time_perc, 3))
         report[log].append(round(time_sum, 3))
 
-    # фильтрование записей отчета на основании кол-ва заходов на страницу, установленных как параметр и сортировка
-    # по суммарному времени загрузок страницы
-    filtered_report_temp = OrderedDict((k, v) for k, v in report.items() if v[6] >= int(config["MAIN"]["report_size"]))
+    # Filter and sort rows
+    filtered_report_temp = OrderedDict((k, v) for k, v in report.items() if v[6] >= report_size)
     filtered_report_temp = OrderedDict(sorted(filtered_report_temp.items(), key=lambda k_v: k_v[1][6], reverse=True))
 
-    # преобразовываем временный словарь в вид, требуемый для вставки в отчет
+    # transform to format which is suitable for html report
 
     filtered_report = []
     for (k, v) in filtered_report_temp.items():
@@ -260,130 +174,119 @@ def create_report(time_log, config):
 
     return filtered_report
 
-def generate_html_report (filtered_report, config, last_log_date):
-    """ Функуция для передачи ранее сформированного отчета в html файл и формирование html отчета на базе шаблона
+def generate_html_report (filtered_report, report_dir,  last_report_name):
+    """ Function to generate html report
 
     Args:
-        config: данные из конфигурационного файла с именем каталога где хранятся логи
-        filtered_report: сформированные данные для последующей передачи в html отчет
-        last_log_date: маска даты, для формирования имени отчета
+        report_dir: directory where reports are stored
+        filtered_report: data which have to be placed in html report
+        last_report_name: report filename (this reports is not exist and has to be generated)
 
     Returns:
-        true/false - метка, которая показывает успешность формирования отчета.
+        true/false  - True in case if all was ok and False in case of exceptions
     """
 
-    # сначала копируем шаблон отчета и на время манипуляций присваиваем ему префикс temp_
-    last_report_name = 'report_' + str(last_log_date) + '.html'
-    full_rep_path = os.path.abspath(config['MAIN']['report_dir'])
+    # copy html template and create html file with '_temp' mask
     try:
-        copy2('report.html', os.path.join(full_rep_path, str('temp_') + last_report_name))
+        copy2('report.html', os.path.join(report_dir, str('temp_') + last_report_name))
     except:
-        logging.error("не найден шаблон отчета")
+        logging.error("Report template not found")
         return False
 
-    # открываем временный отчет (который еще по содержанию шаблон) и копируем из него содержимое
-    html_report = open(os.path.join(full_rep_path, str('temp_') + last_report_name), 'r', encoding='utf-8')
+    # open temporary html file and copy his content
+    html_report = open(os.path.join(report_dir, str('temp_') + last_report_name), 'r', encoding='utf-8')
     html_data = html_report.read()
     html_report.close()
 
-    # заменяем в переменной с содержимым шаблона отчета строку '$table_json' на данные
+    # replace '$table_json' placeholder by the data from filtered_report variable
     newdata = html_data.replace('$table_json', str(filtered_report))
-    # print(newdata)
 
-    # открываем временный отчет (который еще по содержанию шаблон) и вставляем в него новые данные
-    html_report = open(os.path.join(full_rep_path, str('temp_') + last_report_name), 'w')
+    # open temporary html file and inject report data
+    html_report = open(os.path.join(report_dir, str('temp_') + last_report_name), 'w')
     html_report.write(newdata)
     html_report.close()
 
-    # если замена прошла успешно, убираем префикс temp_ из отчета
-    os.rename(os.path.join(full_rep_path, str('temp_') + last_report_name),
-              os.path.join(full_rep_path, last_report_name))
+    # if all was ok, remove temp_ mask from report's filename
+    os.rename(os.path.join(report_dir, str('temp_') + last_report_name),
+              os.path.join(report_dir, last_report_name))
 
     return True
 
 
-def generate_ts_file(config, last_log_date):
-    """ Функуция для создания файла-метки с временем последнего удачного формирования отчета.
-    Если в конфигурационном файле есть параметры пути, сохраняем по нему. Если нет, просто выводим на экран
-    сообщение, а файл не сохраняем
+def generate_ts_file(ts_file_dir):
+    """ function to create ts-file with the timestamp when last html report was generated.
 
     Args:
-        config: данные из конфигурационного файла с именем каталога где хранятся логи
-        last_log_date: маска даты, для формирования имени отчета
+        ts_file_dir: directory where log_analyzer.ts is stored
 
     Returns:
-        результат либо сформированный файл, либо сообщение на экран
+        As a result ts file is generated
     """
-    good_log_date = str(last_log_date)[-2:] + '.' + str(last_log_date)[4:6] + '.' + str(last_log_date)[:4]
     ts = time.asctime()
     try:
-        if os.path.isdir(config['MAIN']['tsfile']):
-            file = open(os.path.join(config['MAIN']['tsfile'], "log_analyzer.ts"), 'w')
-            file.write(ts)
-            file.close()
-            logging.info("Файл log_analyzer.ts успешно создан")
-        else:
-            sys.stdout.write(
-                'log analyzer по формированию отчета за {} успешно завершил работу {}'.format(good_log_date, ts))
+        file = open(os.path.join(ts_file_dir, "log_analyzer.ts"), 'w')
+        file.write(ts)
+        file.close()
+        logging.info("log_analyzer.ts has been successfully updated")
+
     except:
-        sys.stdout.write(
-            'log analyzer по формированию отчета за {} успешно завершил работу {}'.format(good_log_date, ts))
+        logging.error("An Error Occurred While Generating log_analyzer.ts")
+        raise
 
 
-def main(log_path):
+def main(config=config):
 
-    # Проверка корректности конфигурационного файла
-    check_log_status, config = check_log(log_path)
-    if check_log_status == 0:
-        return logging.error("Hе удалось найти конфигурационный файл")
-    elif check_log_status == 1:
-        return logging.error("Не удалось найти все обязательные параметры в конфигурационном файле")
+    # set up arguments and argument parcer
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--config', help='Path to configuration file. Please use path+filename notation', )
+    args = parser.parse_args()
+
+    # define path to config file. In case if --config var was used we use this path
+    if args.config:
+        config_path = args.config
+    # otherwise we use default file path
     else:
-        logger_reconfig(config)
-        logging.info("Проверка конфигурационного файла прошла успешно")
+        config_path = 'log_analyzer.conf'
 
-    # Проверка соответствия другим требованиям (версия программы, наличие нужных файлов)
-    other_reqs_flag = check_other_reqs(config)
+    report_size, \
+    report_dir, \
+    log_dir, \
+    logging_dir, \
+    ts_file_dir = parse_config(config, config_path)
 
-    if other_reqs_flag:
-        logging.info("Проверка соответствия прочим требованиям прошла успешно")
+    logging.basicConfig(filename=os.path.join(logging_dir, 'log_analyzer.log'),
+                        level=logging.INFO,
+                        format='[%(asctime)s] %(levelname).1s %(message)s',
+                        datefmt='%Y.%m.%d %H:%M:%S')
+
+    # Find the last log file
+    last_log, last_log_date = find_last_log(log_dir)
+
+    # check does html report already exist and handle these situations
+    last_report_name = 'report_' + str(last_log_date) + '.html'
+
+    if os.path.isfile(os.path.join(report_dir, last_report_name)):
+        return logging.info("Last Log Report Already Exists. Script Execution Will Be Stopped")
     else:
-        return logging.error("Программа остановлена, так как не выполнены необходимые требования для работы")
+        logging.info("The Last Log Has Been Found. Report Creation Process Will Be Initiated")
 
-    # Поиск последнего журнала доступа и проверка есть ли уже для него отчет
-    last_log, last_log_date, full_rep_path = find_last_log(config)
+    # extract data from the last log file.
+    time_log = parse_log(log_dir, last_log)
+    logging.info("Last Log Data Has Been Extracted")
 
-    if full_rep_path:
-        return logging.error("У последнего лог-файла уже есть отчет. Работа программы остановлена")
-    else:
-        logging.info("Найден последний журнал доступа и у него нет отчета")
+    # Generate report data
+    filtered_report = create_report(time_log, report_size)
+    logging.info("Reports' Data Has Been Generated")
 
-    # получение данных из последнего журнала доступа через генераторы.
-    gen = Generator(parce_log(config, last_log))
-    for x in gen:
-        x
-    time_log = gen.value
-    logging.info("Успешно получены данные из журнала доступа")
-
-    # подготовка данных для htm - отчета
-    filtered_report = create_report(time_log, config)
-    logging.info("Успешно сформированы данные для отчета")
-
-    # Передача данных шаблон html и формирование  html- отчета
-    generate_report_flag = generate_html_report(filtered_report, config, last_log_date)
+    # Get html template, copy the report data and generate the html-report
+    generate_report_flag = generate_html_report(filtered_report, report_dir, last_report_name)
     if generate_report_flag:
-        logging.info("Новый отчет успешно создан")
-        # создание ts-файла. Если нет пути в конфигурационном файле, то вывод на экран сообщения о завершении работы
-        generate_ts_file(config, last_log_date)
+        logging.info("New Report Has Been Generated")
+        # ts-file generation
+        generate_ts_file(ts_file_dir)
     else:
-        logging.info("При формировании нового отчета произошла ошибка. Не удалось сформировать отчет")
+        logging.error("An Error Occurred While Generating the Report")
 
 
 if __name__ == "__main__":
-    # проверка переданы ли параметры пути кофигурационного файла
-    try:
-        log_path = sys.argv[1]
-    # если нет, конфигурационный файл должен быть в катологе из которого запускается скрипт
-    except:
-        log_path = 'log_analyzer.conf'
-    main(log_path)
+    main()
