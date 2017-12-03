@@ -18,7 +18,7 @@ from shutil import copy2
 import time
 import logging
 
-config = {
+def_config = {
     "REPORT_SIZE": 555,
     "REPORT_DIR": "./reports",
     "LOG_DIR": "./log",
@@ -99,6 +99,7 @@ def parse_log(log_dir, last_log):
     for line in myfile.readlines():
         splitted = line.split()
         url = splitted[6].decode("utf-8")
+        url = url.strip('"')
         response_time = splitted[-1].decode("utf-8")
         time_log[url].append(response_time)
     # Closes the file
@@ -183,7 +184,7 @@ def generate_html_report (filtered_report, report_dir,  last_report_name):
         last_report_name: report filename (this reports is not exist and has to be generated)
 
     Returns:
-        true/false  - True in case if all was ok and False in case of exceptions
+        True if function successfully executed. Raise exception otherwise
     """
 
     # copy html template and create html file with '_temp' mask
@@ -191,7 +192,7 @@ def generate_html_report (filtered_report, report_dir,  last_report_name):
         copy2('report.html', os.path.join(report_dir, str('temp_') + last_report_name))
     except:
         logging.error("Report template not found")
-        return False
+        raise
 
     # open temporary html file and copy his content
     html_report = open(os.path.join(report_dir, str('temp_') + last_report_name), 'r', encoding='utf-8')
@@ -220,33 +221,39 @@ def generate_ts_file(ts_file_dir):
         ts_file_dir: directory where log_analyzer.ts is stored
 
     Returns:
-        As a result ts file is generated
+        True if function successfully executed. Raise exception otherwise
     """
+
     ts = time.asctime()
     try:
         file = open(os.path.join(ts_file_dir, "log_analyzer.ts"), 'w')
         file.write(ts)
         file.close()
-        logging.info("log_analyzer.ts has been successfully updated")
-
+        return True
     except:
         logging.error("An Error Occurred While Generating log_analyzer.ts")
         raise
 
 
-def main(config=config):
+def main(cmdline=None):
 
-    # set up arguments and argument parcer
+    config = def_config
+    # set up arguments and argument parser
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config', help='Path to configuration file. Please use path+filename notation', )
-    args = parser.parse_args()
+    parser.add_argument('--config', help='Path to configuration file. Please use path+filename notation')
 
-    # define path to config file. In case if --config var was used we use this path
-    if args.config:
-        config_path = args.config
-    # otherwise we use default file path
+    # case of usual working: we pass config through command line or use default config file
+    if cmdline is None:
+        args = parser.parse_args()
+        if args.config:
+            config_path = config
+        else:
+            config_path = os.path.abspath('log_analyzer.conf')
+
+    # in case if we use unittests, we pass cmd args as an usual function parameter
     else:
-        config_path = 'log_analyzer.conf'
+        args = parser.parse_args(cmdline)
+        config_path = args.config
 
     report_size, \
     report_dir, \
@@ -259,8 +266,11 @@ def main(config=config):
                         format='[%(asctime)s] %(levelname).1s %(message)s',
                         datefmt='%Y.%m.%d %H:%M:%S')
 
-    # Find the last log file
+    # Find the last log file. if file wasn't found, handle this situation
     last_log, last_log_date = find_last_log(log_dir)
+
+    if not last_log:
+        return logging.error("Last Log Report not found in log directory")
 
     # check does html report already exist and handle these situations
     last_report_name = 'report_' + str(last_log_date) + '.html'
@@ -282,10 +292,10 @@ def main(config=config):
     generate_report_flag = generate_html_report(filtered_report, report_dir, last_report_name)
     if generate_report_flag:
         logging.info("New Report Has Been Generated")
-        # ts-file generation
-        generate_ts_file(ts_file_dir)
-    else:
-        logging.error("An Error Occurred While Generating the Report")
+
+    # ts-file generation
+    if generate_ts_file(ts_file_dir):
+        logging.info("log_analyzer.ts has been successfully updated")
 
 
 if __name__ == "__main__":
