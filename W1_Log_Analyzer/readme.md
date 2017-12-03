@@ -35,7 +35,7 @@ with such as an --config parameter. In this case file located in this path has t
 
 ### Prerequisites
 
- Python version 3.6 and above
+Python version 3.6 and above
 
 ### Installing
 
@@ -43,7 +43,26 @@ No special installation procedure is required. You have to copy and setup the fi
 
 ## Running the tests
 
-TBA 
+### Brief description
+
+1. Unittest groups into four script. Each script is responsible for the testing of particular function of log_analyzer script. The name of testing script is "test_"+ function name
+2. Below we provide the general logic of each test inside test script. If you need more detail you are welcome to read description within code:
+    * **test_main**. This script tests general logic of log_analyzer script. Inside two tests:
+        * test_no_exception_empty_log_dir - it checks whether the exceptions occur if the log dir is empty. If no exceptions, test pass
+        * test_no_duplicate_report. This test check that log_analyzer doesn't create new report if the report with the latest date is already created
+    * **test_parce_log**. This script check that function retrieve correct information from log
+    * **test_create_report**. This script check that function generates correct statistic from url-time pair.
+    * **test_create_ts_file** This script check that timestamp inside the ts file is the same as modification time of file
+
+### Deployement testing environment
+In order to run unittest you have to do the following steps:
+1. Copy files with test_ mask and log_analyzer into same directory
+2. Create folder 'tests' in this directory
+3. Run tests. For example:
+
+```
+python -m unittest -v test_main
+```
 
 
 ## License
