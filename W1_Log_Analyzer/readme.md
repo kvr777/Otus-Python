@@ -45,7 +45,7 @@ No special installation procedure is required. You have to copy and setup the fi
 
 ### Brief description
 
-1. Unittest groups into four script. Each script is responsible for the testing of particular function of log_analyzer script. The name of testing script is "test_"+ function name
+1. Unittest groups into four script and located in _testing_ directory. Each script is responsible for the testing of particular function of log_analyzer script. The name of testing script is "test_"+ function name
 2. Below we provide the general logic of each test inside test script. If you need more detail you are welcome to read description within code:
     * **test_main**. This script tests general logic of log_analyzer script. Inside two tests:
         * test_no_exception_empty_log_dir - it checks whether the exceptions occur if the log dir is empty. If no exceptions, test pass
@@ -56,12 +56,12 @@ No special installation procedure is required. You have to copy and setup the fi
 
 ### Deployement testing environment
 In order to run unittest you have to do the following steps:
-1. Copy files with test_ mask and log_analyzer into same directory
-2. Create folder 'tests' in this directory
-3. Run tests. For example:
+1. Copy folder _testing_ into the same directory (hereafter main directory) as a script log_analyzer.py
+2. Create folder 'test_folder' in the main directory
+3. Run tests.
 
 ```
-python -m unittest -v test_main
+python -m unittest discover -v
 ```
 
 
