@@ -281,19 +281,12 @@ if __name__ == "__main__":
                         help='Path to configuration file. Please use path+filename notation',
                         default=os.path.abspath('log_analyzer.conf'))
 
-    # case of usual working: we pass config through command line or use default config file
-    # if cmdline is None:
+    # parse config file
     args = parser.parse_args()
     config_path = args.config
-    # print(config, config_path)
-
-    # # in case if we use unittests, we pass cmd args as an usual function parameter
-    # else:
-    #     args = parser.parse_args(cmdline)
-    #     config_path = args.config
-
     config = parse_config(config, config_path)
 
+    # set up logging. If directory for logging is not defined, use stdout
     logging.basicConfig(filename=os.path.join(config['LOGGING'], 'log_analyzer.log')
                         if 'LOGGING' in [key for key in config.keys()] else None,
                         level=logging.INFO,
