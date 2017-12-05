@@ -12,7 +12,7 @@ import re
 import argparse
 import configparser
 import gzip
-from collections import defaultdict, OrderedDict
+from collections import defaultdict, OrderedDict , namedtuple
 from statistics import median
 from shutil import copy2
 import time
@@ -35,14 +35,14 @@ def parse_config (config, config_path):
     for file_conf_arg in file_conf_args:
         config[file_conf_arg.upper()] = file_config['MAIN'][file_conf_arg]
 
-    # parse config
+    # try to parse config. Though we pass dict as a result, it is useful to discover missing parameters in early stage
     try:
-        report_size, report_dir, log_dir, logging_dir, ts_file_dir = int(config['REPORT_SIZE']), \
-                                                                     config['REPORT_DIR'], \
-                                                                     config['LOG_DIR'], \
-                                                                     config['LOGGING'], \
-                                                                     config['TSFILE']
-        return report_size, report_dir, log_dir, logging_dir, ts_file_dir
+        report_size = int(config['REPORT_SIZE'])
+        report_dir = config['REPORT_DIR']
+        log_dir = config['LOG_DIR']
+        logging_dir = config['LOGGING'] if 'LOGGING' in [key for key in config.keys()] else None
+        ts_file_dir = config['TSFILE']
+        return config
     except:
         raise
 
@@ -60,6 +60,7 @@ def find_last_log(log_dir):
     """
 
     # find the log files by mask in name. Then select one with the last date
+    last_log_features = namedtuple('last_log_features', ['last_log', 'last_log_date'])
     mask = 'nginx-access-ui.log-'
 
     last_log = None
@@ -72,40 +73,43 @@ def find_last_log(log_dir):
                 if int(log_temp.group(1)) > last_log_date:
                     last_log = file
                     last_log_date = int(log_temp.group(1))
+    last_log_features.last_log = last_log
+    last_log_features.last_log_date = last_log_date
+    return last_log_features
 
-    return last_log, last_log_date
 
-
-def parse_log(log_dir, last_log):
+def parse_log(last_log_with_path):
     """ This func retrieve an url and its request time
     At the first step, depending on file format, we select a function for file opening (gz or standard).
     Then we process each line of the log and retrieve url(7-th column) and time (the last column) from the log.
     Args:
-        log_dir: log directory
-        last_log: log with the latest date in the name
+        last_log_with_path: path to logfile with the latest date in the name
 
     Returns:
         time_log: dict with url as a key and list of times as a values
     """
-    if last_log.endswith(".gz"):
-        myfile = gzip.open(os.path.join(log_dir, last_log), 'rb')
+    if last_log_with_path.endswith(".gz"):
+        myfile = gzip.open(last_log_with_path, 'rb')
     else:
         try:
-            myfile = open(os.path.join(log_dir, last_log),  'rb')
+            myfile = open(last_log_with_path,  'rb')
         except:
             logging.error("An Error Occurred While Opening the Log File")
             raise
     time_log = defaultdict(list)
-    for line in myfile.readlines():
-        splitted = line.split()
-        url = splitted[6].decode("utf-8")
-        url = url.strip('"')
-        response_time = splitted[-1].decode("utf-8")
-        time_log[url].append(response_time)
-    # Closes the file
-    myfile.close()
-    return time_log
-
+    try:
+        for line in myfile:
+            splitted = line.split()
+            url = splitted[6].decode("utf-8")
+            url = url.strip('"')
+            response_time = splitted[-1].decode("utf-8")
+            time_log[url].append(response_time)
+        # Closes the file
+        myfile.close()
+        return time_log
+    except:
+        logging.error("Error while parsing log. Please check this logfile: {}".format(last_log_with_path))
+        raise
 
 def create_report(time_log, report_size):
 
@@ -124,7 +128,8 @@ def create_report(time_log, report_size):
     Finally we save report data in the format which is suitable for placing in html template
 
     Args:
-        report_size: parameter to filter report data. Only urls with total request time > report_size are selected
+        config: config with parameter to filter report data.
+        Only urls with total request time > report_size are selected
         time_log: dict with url as a key and list of times as a values
 
     Returns:
@@ -154,7 +159,7 @@ def create_report(time_log, report_size):
         report[log].append(round(time_sum, 3))
 
     # Filter and sort rows
-    filtered_report_temp = OrderedDict((k, v) for k, v in report.items() if v[6] >= report_size)
+    filtered_report_temp = OrderedDict((k, v) for k, v in report.items() if v[6] >= int(report_size))
     filtered_report_temp = OrderedDict(sorted(filtered_report_temp.items(), key=lambda k_v: k_v[1][6], reverse=True))
 
     # transform to format which is suitable for html report
@@ -179,7 +184,7 @@ def generate_html_report (filtered_report, report_dir,  last_report_name):
     """ Function to generate html report
 
     Args:
-        report_dir: directory where reports are stored
+        report_dir: - directory where reports are stored
         filtered_report: data which have to be placed in html report
         last_report_name: report filename (this reports is not exist and has to be generated)
 
@@ -194,24 +199,25 @@ def generate_html_report (filtered_report, report_dir,  last_report_name):
         logging.error("Report template not found")
         raise
 
-    # open temporary html file and copy his content
-    html_report = open(os.path.join(report_dir, str('temp_') + last_report_name), 'r', encoding='utf-8')
-    html_data = html_report.read()
-    html_report.close()
+    try:
+        # open temporary html file and copy his content
+        with open(os.path.join(report_dir, str('temp_') + last_report_name), 'r', encoding='utf-8') as html_report:
+            html_data = html_report.read()
 
-    # replace '$table_json' placeholder by the data from filtered_report variable
-    newdata = html_data.replace('$table_json', str(filtered_report))
+        # replace '$table_json' placeholder by the data from filtered_report variable
+        newdata = html_data.replace('$table_json', str(filtered_report))
 
-    # open temporary html file and inject report data
-    html_report = open(os.path.join(report_dir, str('temp_') + last_report_name), 'w')
-    html_report.write(newdata)
-    html_report.close()
+        # open temporary html file and inject report data
+        with open(os.path.join(report_dir, str('temp_') + last_report_name), 'w') as html_report:
+            html_report.write(newdata)
 
-    # if all was ok, remove temp_ mask from report's filename
-    os.rename(os.path.join(report_dir, str('temp_') + last_report_name),
-              os.path.join(report_dir, last_report_name))
+        # if all was ok, remove temp_ mask from report's filename
+        os.rename(os.path.join(report_dir, str('temp_') + last_report_name),
+                  os.path.join(report_dir, last_report_name))
 
-    return True
+        logging.info("New Report Has Been Generated")
+    except:
+        logging.error("An Error Occurred While Creating the html-report")
 
 
 def generate_ts_file(ts_file_dir):
@@ -221,82 +227,80 @@ def generate_ts_file(ts_file_dir):
         ts_file_dir: directory where log_analyzer.ts is stored
 
     Returns:
-        True if function successfully executed. Raise exception otherwise
+        None if function successfully executed. Raise exception otherwise
     """
 
     ts = time.asctime()
     try:
-        file = open(os.path.join(ts_file_dir, "log_analyzer.ts"), 'w')
-        file.write(ts)
-        file.close()
-        return True
+        with open(os.path.join(ts_file_dir, "log_analyzer.ts"), 'w') as file:
+            file.write(ts)
+        logging.info("log_analyzer.ts has been successfully updated")
     except:
         logging.error("An Error Occurred While Generating log_analyzer.ts")
         raise
 
 
-def main(cmdline=None):
+def main(config):
 
-    config = def_config
-    # set up arguments and argument parser
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--config', help='Path to configuration file. Please use path+filename notation')
-
-    # case of usual working: we pass config through command line or use default config file
-    if cmdline is None:
-        args = parser.parse_args()
-        if args.config:
-            config_path = config
-        else:
-            config_path = os.path.abspath('log_analyzer.conf')
-
-    # in case if we use unittests, we pass cmd args as an usual function parameter
-    else:
-        args = parser.parse_args(cmdline)
-        config_path = args.config
-
-    report_size, \
-    report_dir, \
-    log_dir, \
-    logging_dir, \
-    ts_file_dir = parse_config(config, config_path)
-
-    logging.basicConfig(filename=os.path.join(logging_dir, 'log_analyzer.log'),
-                        level=logging.INFO,
-                        format='[%(asctime)s] %(levelname).1s %(message)s',
-                        datefmt='%Y.%m.%d %H:%M:%S')
 
     # Find the last log file. if file wasn't found, handle this situation
-    last_log, last_log_date = find_last_log(log_dir)
+    last_log_features = find_last_log(config['LOG_DIR'])
 
-    if not last_log:
-        return logging.error("Last Log Report not found in log directory")
+    if not last_log_features.last_log:
+        return logging.info("Any Logfile Wasn't Found In Log Directory")
 
     # check does html report already exist and handle these situations
-    last_report_name = 'report_' + str(last_log_date) + '.html'
+    last_report_name = 'report_' + str(last_log_features.last_log_date) + '.html'
 
-    if os.path.isfile(os.path.join(report_dir, last_report_name)):
+    if os.path.isfile(os.path.join(config['REPORT_DIR'], last_report_name)):
         return logging.info("Last Log Report Already Exists. Script Execution Will Be Stopped")
     else:
         logging.info("The Last Log Has Been Found. Report Creation Process Will Be Initiated")
 
     # extract data from the last log file.
-    time_log = parse_log(log_dir, last_log)
+    time_log = parse_log(os.path.join(config['LOG_DIR'], last_log_features.last_log))
     logging.info("Last Log Data Has Been Extracted")
 
     # Generate report data
-    filtered_report = create_report(time_log, report_size)
+    filtered_report = create_report(time_log, config['REPORT_SIZE'])
     logging.info("Reports' Data Has Been Generated")
 
     # Get html template, copy the report data and generate the html-report
-    generate_report_flag = generate_html_report(filtered_report, report_dir, last_report_name)
-    if generate_report_flag:
-        logging.info("New Report Has Been Generated")
+    generate_html_report(filtered_report, config['REPORT_DIR'], last_report_name)
 
     # ts-file generation
-    if generate_ts_file(ts_file_dir):
-        logging.info("log_analyzer.ts has been successfully updated")
-
+    generate_ts_file(config['TSFILE'])
 
 if __name__ == "__main__":
-    main()
+
+    config = def_config
+    # set up arguments and argument parser
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--config',
+                        help='Path to configuration file. Please use path+filename notation',
+                        default=os.path.abspath('log_analyzer.conf'))
+
+    # case of usual working: we pass config through command line or use default config file
+    # if cmdline is None:
+    args = parser.parse_args()
+    config_path = args.config
+    # print(config, config_path)
+
+    # # in case if we use unittests, we pass cmd args as an usual function parameter
+    # else:
+    #     args = parser.parse_args(cmdline)
+    #     config_path = args.config
+
+    config = parse_config(config, config_path)
+
+    logging.basicConfig(filename=os.path.join(config['LOGGING'], 'log_analyzer.log')
+                        if 'LOGGING' in [key for key in config.keys()] else None,
+                        level=logging.INFO,
+                        format='[%(asctime)s] %(levelname).1s %(message)s',
+                        datefmt='%Y.%m.%d %H:%M:%S')
+    try:
+        main(config)
+    except Exception:
+        logging.exception("Unexpected error occurred")
+        raise
