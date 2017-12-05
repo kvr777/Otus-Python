@@ -1,7 +1,8 @@
 import unittest
-from log_analyzer import create_report
-import os, shutil, logging
-from collections import defaultdict, OrderedDict
+from .context import log_analyzer
+import logging
+from collections import defaultdict
+
 
 logging.disable(logging.CRITICAL)
 
@@ -51,7 +52,7 @@ class TestCreateReport(unittest.TestCase):
 
 
     def test_create_report(self):
-        self.tuple_from_func = create_report(self.test_time_log, self.test_report_size)
+        self.tuple_from_func = log_analyzer.create_report(self.test_time_log, self.test_report_size)
         self.assertEqual(self.control_tuple, self.tuple_from_func)
 
 

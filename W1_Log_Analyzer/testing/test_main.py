@@ -1,5 +1,5 @@
 import unittest
-from log_analyzer import main as mn
+from .context import log_analyzer
 import os
 import logging
 
@@ -9,8 +9,17 @@ class TestMain(unittest.TestCase):
 
     def setUp(self):
 
+        # define test_config
+        self.test_config = {
+            "REPORT_SIZE": 0,
+            "REPORT_DIR": "./test_folder",
+            "LOG_DIR": "./test_folder",
+            "LOGGING": "./test_folder",
+            "TSFILE": "./test_folder"
+            }
+
         # define directory where log and report files are located (only for test purposes)
-        self.dir = os.path.abspath('./tests')
+        self.dir = os.path.abspath(self.test_config["LOG_DIR"])
 
         # parameters to create fake log and report files (see description of test_no_duplicate_report function)
         self.last_log_date = '20171203'
@@ -20,8 +29,6 @@ class TestMain(unittest.TestCase):
 
         self.last_report_name = 'report_' + str(self.last_log_date) + '.html'
         self.report_file_path = os.path.join(self.dir, self.last_report_name)
-
-
 
 
     def test_no_exception_empty_log_dir(self):
@@ -37,13 +44,13 @@ class TestMain(unittest.TestCase):
         """
 
         # remove log files from './tests' directory
-        for file in os.listdir(self.dir):
+        for file in os.listdir(self.test_config["REPORT_DIR"]):
             if file.startswith('nginx-access-ui.log-'):
-                os.remove(os.path.join(self.dir, file))
+                os.remove(os.path.join(self.test_config["REPORT_DIR"], file))
 
         # run script
         try:
-            mn(["--config", "test_log_analyzer.conf"])
+            log_analyzer.main(self.test_config)
         except:
             self.fail("script fail with empty log")
 
@@ -78,7 +85,8 @@ class TestMain(unittest.TestCase):
         report_file.close()
         report_mtime_initial = os.path.getmtime(self.report_file_path)
         self.full_path = os.path.abspath('test_log_analyzer.conf')
-        mn(["--config", "test_log_analyzer.conf"])
+        # mn(["--config", "test_log_analyzer.conf"])
+        log_analyzer.main(self.test_config)
         report_mtime_after = os.path.getmtime(self.report_file_path)
         self.assertEqual(report_mtime_initial, report_mtime_after)
 

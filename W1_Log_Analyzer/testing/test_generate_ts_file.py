@@ -1,7 +1,7 @@
 import unittest
-from log_analyzer import generate_ts_file
-import os, shutil, logging
-import time, datetime
+from .context import log_analyzer
+import os, logging
+import time
 
 logging.disable(logging.CRITICAL)
 
@@ -19,8 +19,8 @@ class TestGenerateTsFile(unittest.TestCase):
 
     def setUp(self):
         # define dir for test case, run generate_ts_file() func and store file path into variable
-        self.dir = os.path.abspath('./tests')
-        generate_ts_file(self.dir)
+        self.dir = os.path.abspath('./test_folder')
+        log_analyzer.generate_ts_file(self.dir)
         self.ts_path = os.path.join(self.dir, 'log_analyzer.ts')
 
     def test_generate_ts_file(self):
