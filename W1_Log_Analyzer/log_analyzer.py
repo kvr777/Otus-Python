@@ -13,9 +13,8 @@ import sys
 import argparse
 import configparser
 import gzip
-from collections import defaultdict, OrderedDict , namedtuple
+from collections import defaultdict, namedtuple
 from statistics import median
-from shutil import copy2
 import time
 import logging
 
@@ -23,9 +22,9 @@ def_config = {
     "REPORT_SIZE": 555,
     "REPORT_DIR": "./reports",
     "LOG_DIR": "./log",
-    "LOGGING": "log_analyzer.log",
+    "LOGGING": 'Noe',
     "TSFILE": "./monitoring",
-    "ERR_PARSE_RATE": 10
+    "ERR_PARSE_RATE": 0.2
     }
 
 
@@ -80,53 +79,48 @@ def find_last_log(log_dir):
     return last_log_features
 
 
-def parse_log(last_log_with_path, err_parse_rate):
+def parse_log(last_log_with_path):
     """ This func retrieve an url and its request time
     At the first step, depending on file format, we select a function for file opening (gz or standard).
     Then we process each line of the log and retrieve url(7-th column) and time (the last column) from the log.
     Args:
         last_log_with_path: path to logfile with the latest date in the name
-        err_parse_rate: maximum number of wrong lines in log. If this threshold exceeds the execution will be stopped
 
     Returns:
-        time_log: dict with url as a key and list of times as a values
+        parsed line with url and processed times as well as number of good processed lines and total processed lines
     """
     if last_log_with_path.endswith(".gz"):
-        last_log_file = gzip.open(last_log_with_path, 'rb')
+        last_log_file = gzip.open(last_log_with_path, 'rt', encoding='utf-8')
     else:
         try:
-            last_log_file = open(last_log_with_path,  'rb')
+            last_log_file = open(last_log_with_path, encoding='utf-8')
         except:
             logging.error("An error occurred while opening the log file")
             raise
-    time_log = defaultdict(list)
-    curr_parce_err = 0
+    processed_lines = 0
+    total_lines = 0
     for line in last_log_file:
-        if curr_parce_err < int(err_parse_rate):
-            try:
-                splitted = line.split()
-                url = splitted[6].decode("utf-8")
-                url = url.strip('"')
-                response_time = splitted[-1].decode("utf-8")
-                time_log[url].append(response_time)
-            except:
-                curr_parce_err += 1
-        else:
-            # Closes the file
-            last_log_file.close()
-            logging.error("Number of wrong lines in the file exceeded defined threshold. "
-                          "Script execution will be stopped ")
-            sys.exit()
+        try:
+            splitted = line.split()
+            url = splitted[6]
+            url = url.strip('"')
+            response_time = splitted[-1]
+            total_lines += 1
+            processed_lines += 1
+            yield url, response_time, total_lines, processed_lines
+        except:
+            total_lines += 1
+            yield None, None, total_lines, processed_lines
     # Closes the file
     last_log_file.close()
-    return time_log
 
 
 
-def create_report(time_log, report_size):
+def create_report(last_log_with_path,err_parse_rate, report_size):
 
     """ This function generates the data which have to placed in html report
-    At the first step we calculate the aggregated statistic for all urls:
+    At the first step we calculate the aggregated statistic for all urls and form dict with url as a key
+    and list of values as a time:
         total number of pages' visits
         total time to process requests for all pages
     Then, line by line we calculate necessary statistic by every url:
@@ -140,60 +134,60 @@ def create_report(time_log, report_size):
     Finally we save report data in the format which is suitable for placing in html template
 
     Args:
-        config: config with parameter to filter report data.
+        last_log_with_path: path to logfile with the latest date in the name
+        report_size: parameter to filter report data.
         Only urls with total request time > report_size are selected
-        time_log: dict with url as a key and list of times as a values
+        err_parse_rate: maximum number of wrong lines in log. If this threshold exceeds the execution will be stopped
+
 
     Returns:
         filtered_report: data which have to be placed in html report
     """
 
     # calculate the statistic for all urls
-    total_count = sum([len(v) for (k, v) in time_log.items()])
-    total_sum = sum([sum([float(x) for x in v]) for (k, v) in time_log.items()])
+    total_count = total_sum = 0
+    parsed_lines = parse_log(last_log_with_path)
+    time_log = defaultdict(list)
+    for url, response_time, total_lines, processed_lines in parsed_lines:
+        if url is not None:
+            time_log[url].append(response_time)
+            total_count += 1
+            total_sum += float(response_time)
+    if (1 - processed_lines/total_lines*1.) > err_parse_rate:
+        logging.error("Percentage of wrong lines in the file exceeded defined threshold. "
+                      "Script execution will be stopped ")
+        sys.exit()
 
-    # create report as a dict. The key is an url, values is the target statistic for the report
-    report = defaultdict(list)
-    for log, times in time_log.items():
-        time_sum = sum([float(x) for x in times])
-        count = len(times)
-        count_perc = (count / total_count) * 100
-        time_avg = time_sum / count
-        time_max = max([float(x) for x in times])
-        time_med = median([float(x) for x in times])
-        time_perc = (time_sum / total_sum) * 100
-        report[log].append(count)
-        report[log].append(round(count_perc, 3))
-        report[log].append(round(time_avg, 3))
-        report[log].append(round(time_max, 3))
-        report[log].append(round(time_med, 3))
-        report[log].append(round(time_perc, 3))
-        report[log].append(round(time_sum, 3))
+    else:
+        # create report as a dict. The key is an url, values is the target statistic for the report
+        report = []
+        for log, times in time_log.items():
+            time_sum = sum([float(x) for x in times])
+            count = len(times)
+            count_perc = (count / total_count) * 100
+            time_avg = time_sum / count
+            time_max = max([float(x) for x in times])
+            time_med = median([float(x) for x in times])
+            time_perc = (time_sum / total_sum) * 100
+            if round(time_sum, 3) >= int(report_size):
+                sample = {"count": count,
+                          "time_avg": round(time_avg, 3),
+                          "time_max": round(time_max, 3),
+                          "time_sum": round(time_sum, 3),
+                          "url": log,
+                          "time_med": round(time_med, 3),
+                          "time_perc": round(time_perc, 3),
+                          "count_perc": round(count_perc, 3)
+                          }
+                report.append(sample)
 
-    # Filter and sort rows
-    filtered_report_temp = OrderedDict((k, v) for k, v in report.items() if v[6] >= int(report_size))
-    filtered_report_temp = OrderedDict(sorted(filtered_report_temp.items(), key=lambda k_v: k_v[1][6], reverse=True))
+        # Filter rows
+        filtered_report = sorted(report, key=lambda k: k['time_sum'], reverse=True)
 
-    # transform to format which is suitable for html report
-
-    filtered_report = []
-    for (k, v) in filtered_report_temp.items():
-        sample = {}
-        sample = {"count": v[0],
-                  "time_avg": v[2],
-                  "time_max": v[3],
-                  "time_sum": v[6],
-                  "url": k,
-                  "time_med": v[4],
-                  "time_perc": v[5],
-                  "count_perc": v[1]
-                  }
-        filtered_report.append(sample)
-
-    return filtered_report
+        return filtered_report
 
 
-def generate_html_report (filtered_report, report_dir,  last_report_name):
+def generate_html_report(filtered_report, report_dir,  last_report_name):
 
     """ Function to generate html report
 
@@ -217,9 +211,13 @@ def generate_html_report (filtered_report, report_dir,  last_report_name):
         # replace '$table_json' placeholder by the data from filtered_report variable
         newdata = html_data.replace('$table_json', str(filtered_report))
 
-        # open temporary html file and inject report data
-        with open(os.path.join(report_dir, last_report_name), 'w') as html_report:
+        # create temporary html file and inject report data
+        with open(os.path.join(report_dir, str('temp_') + last_report_name), 'w') as html_report:
             html_report.write(newdata)
+
+        # if all was ok, remove temp_ mask from report's filename
+        os.rename(os.path.join(report_dir, str('temp_') + last_report_name),
+                  os.path.join(report_dir, last_report_name))
 
         logging.info("New report has been generated")
     except:
@@ -262,12 +260,9 @@ def main(config):
     else:
         logging.info("The last log has been found. Report creation process will be initiated")
 
-    # extract data from the last log file.
-    time_log = parse_log(os.path.join(config['LOG_DIR'], last_log_features.last_log), config['ERR_PARSE_RATE'])
-    logging.info("Last log data has been extracted")
-
     # Generate report data
-    filtered_report = create_report(time_log, config['REPORT_SIZE'])
+    filtered_report = create_report(os.path.join(config['LOG_DIR'], last_log_features.last_log),
+                                    config['ERR_PARSE_RATE'], config['REPORT_SIZE'])
     logging.info("Reports' data has been generated")
 
     # Get html template, copy the report data and generate the html-report
@@ -291,7 +286,7 @@ if __name__ == "__main__":
     config = parse_config(def_config, config_path)
 
     # set up logging. If directory for logging is not defined, use stdout
-    logging.basicConfig(filename=config['LOGGING'] if len(config['LOGGING']) > 4 else None,
+    logging.basicConfig(filename=config['LOGGING'] if len(str(config['LOGGING'])) > 4 else None,
                         level=logging.INFO,
                         format='[%(asctime)s] %(levelname).1s %(message)s',
                         datefmt='%Y.%m.%d %H:%M:%S')
