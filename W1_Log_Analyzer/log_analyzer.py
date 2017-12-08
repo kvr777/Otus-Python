@@ -79,7 +79,7 @@ def find_last_log(log_dir):
     return last_log_features
 
 
-def parse_log(last_log_with_path):
+def parse_log(last_log_with_path, err_parse_rate):
     """ This func retrieve an url and its request time
     At the first step, depending on file format, we select a function for file opening (gz or standard).
     Then we process each line of the log and retrieve url(7-th column) and time (the last column) from the log.
@@ -107,13 +107,18 @@ def parse_log(last_log_with_path):
             response_time = splitted[-1]
             total_lines += 1
             processed_lines += 1
-            yield url, response_time, total_lines, processed_lines
+            yield url, response_time
         except:
             total_lines += 1
-            yield None, None, total_lines, processed_lines
+
     # Closes the file
     last_log_file.close()
 
+    # compare current error rate with threshold. Stop if exceeded
+    if (1 - processed_lines/float(total_lines)) > err_parse_rate:
+        logging.error("Percentage of wrong lines in the file exceeded defined threshold. "
+                      "Script execution will be stopped ")
+        sys.exit()
 
 
 def create_report(last_log_with_path,err_parse_rate, report_size):
@@ -146,45 +151,39 @@ def create_report(last_log_with_path,err_parse_rate, report_size):
 
     # calculate the statistic for all urls
     total_count = total_sum = 0
-    parsed_lines = parse_log(last_log_with_path)
+    parsed_lines = parse_log(last_log_with_path,err_parse_rate)
     time_log = defaultdict(list)
-    for url, response_time, total_lines, processed_lines in parsed_lines:
-        if url is not None:
-            time_log[url].append(response_time)
-            total_count += 1
-            total_sum += float(response_time)
-    if (1 - processed_lines/total_lines*1.) > err_parse_rate:
-        logging.error("Percentage of wrong lines in the file exceeded defined threshold. "
-                      "Script execution will be stopped ")
-        sys.exit()
+    for url, response_time in parsed_lines:
+        time_log[url].append(response_time)
+        total_count += 1
+        total_sum += float(response_time)
 
-    else:
-        # create report as a dict. The key is an url, values is the target statistic for the report
-        report = []
-        for log, times in time_log.items():
-            time_sum = sum([float(x) for x in times])
-            count = len(times)
-            count_perc = (count / total_count) * 100
-            time_avg = time_sum / count
-            time_max = max([float(x) for x in times])
-            time_med = median([float(x) for x in times])
-            time_perc = (time_sum / total_sum) * 100
-            if round(time_sum, 3) >= int(report_size):
-                sample = {"count": count,
-                          "time_avg": round(time_avg, 3),
-                          "time_max": round(time_max, 3),
-                          "time_sum": round(time_sum, 3),
-                          "url": log,
-                          "time_med": round(time_med, 3),
-                          "time_perc": round(time_perc, 3),
-                          "count_perc": round(count_perc, 3)
-                          }
-                report.append(sample)
+    # create report as a dict. The key is an url, values is the target statistic for the report
+    report = []
+    for log, times in time_log.items():
+        time_sum = sum([float(x) for x in times])
+        count = len(times)
+        count_perc = (count / total_count) * 100
+        time_avg = time_sum / count
+        time_max = max([float(x) for x in times])
+        time_med = median([float(x) for x in times])
+        time_perc = (time_sum / total_sum) * 100
+        if round(time_sum, 3) >= int(report_size):
+            sample = {"count": count,
+                      "time_avg": round(time_avg, 3),
+                      "time_max": round(time_max, 3),
+                      "time_sum": round(time_sum, 3),
+                      "url": log,
+                      "time_med": round(time_med, 3),
+                      "time_perc": round(time_perc, 3),
+                      "count_perc": round(count_perc, 3)
+                      }
+            report.append(sample)
 
-        # Filter rows
-        filtered_report = sorted(report, key=lambda k: k['time_sum'], reverse=True)
+    # Filter rows
+    filtered_report = sorted(report, key=lambda k: k['time_sum'], reverse=True)
 
-        return filtered_report
+    return filtered_report
 
 
 def generate_html_report(filtered_report, report_dir,  last_report_name):
