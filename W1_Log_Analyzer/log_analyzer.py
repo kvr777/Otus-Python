@@ -221,6 +221,7 @@ def generate_html_report(filtered_report, report_dir,  last_report_name):
         logging.info("New report has been generated")
     except:
         logging.error("An error occurred while creating the html-report")
+        raise
 
 
 def generate_ts_file(ts_file_dir):
