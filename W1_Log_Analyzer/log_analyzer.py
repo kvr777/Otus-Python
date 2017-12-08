@@ -211,7 +211,7 @@ def generate_html_report(filtered_report, report_dir,  last_report_name):
         newdata = html_data.replace('$table_json', str(filtered_report))
 
         # create temporary html file and inject report data
-        with open(os.path.join(report_dir, str('temp_') + last_report_name), 'w') as html_report:
+        with open(os.path.join(report_dir, str('temp_') + last_report_name), 'w', encoding='utf-8') as html_report:
             html_report.write(newdata)
 
         # if all was ok, remove temp_ mask from report's filename
@@ -235,7 +235,7 @@ def generate_ts_file(ts_file_dir):
 
     ts = time.asctime()
     try:
-        with open(os.path.join(ts_file_dir, "log_analyzer.ts"), 'w') as file:
+        with open(os.path.join(ts_file_dir, "log_analyzer.ts"), 'w', encoding='utf-8') as file:
             file.write(ts)
         logging.info("log_analyzer.ts has been successfully updated")
     except:
