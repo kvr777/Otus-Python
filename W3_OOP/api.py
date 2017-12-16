@@ -46,7 +46,6 @@ class Field(metaclass=ABCMeta):
     Basic field class with function pattern for child field classes.
     """
 
-    @abstractmethod
     def __init__(self, label=None, required=False, nullable=False):
         self.required = required
         self.nullable = nullable
@@ -60,8 +59,6 @@ class CharField(Field):
     """
     Field for string type characters
     """
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
 
     def validate(self, label):
         if label not in list(EMPTY_VALUES):
@@ -73,8 +70,6 @@ class ArgumentsField(Field):
     """
         Field to accept dict with arguments
     """
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
 
     def validate(self, label):
         if label not in list(EMPTY_VALUES):
@@ -86,8 +81,6 @@ class EmailField(CharField):
     """
         Field for e-mail. Child class from CharField
     """
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
 
     def validate(self, label):
         super().validate(label)
@@ -101,8 +94,6 @@ class PhoneField(Field):
     """
     Field for phone. Should contains 11 digits and begin with 7
     """
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
 
     def validate(self, label):
         if label not in list(EMPTY_VALUES):
@@ -114,8 +105,6 @@ class DateField(Field):
     """
     Field for date in format DD.MM.YYY
     """
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
 
     def validate(self, label):
         if label not in list(EMPTY_VALUES):
@@ -129,8 +118,6 @@ class BirthDayField(DateField):
     """
     Field for birthday in format DD.MM.YYY and year not older than 70 years from current year
     """
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
 
     def validate(self, label):
         super().validate(label)
@@ -147,8 +134,6 @@ class GenderField(Field):
     """
     If this field is not empty it could accept only 0, 1,2
     """
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
 
     def validate(self, label):
         if label not in list(EMPTY_VALUES):
@@ -160,8 +145,6 @@ class ClientIDsField(Field):
     """
     This field should be a list
     """
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
 
     def validate(self, label):
         if label not in list(EMPTY_VALUES):
@@ -191,14 +174,14 @@ class RequestProcessor(metaclass=DeclarativeFieldsMetaclass):
     Then validate function checks all values passed by init function and return dict with all errors that was discovered
 
     """
-    def __init__(self, **passed_dict):
+    def __init__(self, **kwargs):
+
         non_empty_fields = []
-        for field, value in list(passed_dict.items()):
-            for (cls_fld_name, cls_fld_value) in self.all_fields:
-                if cls_fld_name == field:
-                    cls_fld_value.label = value
-            if value not in list(EMPTY_VALUES):
-                non_empty_fields.append(field)
+        for (cls_fld_name, cls_fld_value) in self.all_fields:
+            if cls_fld_name in kwargs.keys():
+                cls_fld_value.label = kwargs[cls_fld_name]
+                if kwargs[cls_fld_name] not in list(EMPTY_VALUES):
+                    non_empty_fields.append(cls_fld_name)
         self.non_empty_fields = non_empty_fields
 
     def validate(self):
@@ -226,9 +209,6 @@ class ClientsInterestsRequest(RequestProcessor):
     client_ids = ClientIDsField(required=True)
     date = DateField(required=False, nullable=True)
 
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
     def validate(self):
         return super().validate()
 
@@ -251,8 +231,6 @@ class OnlineScoreRequest(RequestProcessor):
     birthday = BirthDayField(required=False, nullable=True)
     gender = GenderField(required=False, nullable=True)
 
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
 
     def validate(self):
         has_combo = False
