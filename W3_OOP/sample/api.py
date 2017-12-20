@@ -10,7 +10,8 @@ import uuid
 from optparse import OptionParser
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import re
-from scoring import get_score, get_interests
+import store
+from scoring_new import get_score, get_interests
 
 SALT = "Otus"
 ADMIN_LOGIN = "admin"
@@ -49,6 +50,7 @@ class Field(metaclass=ABCMeta):
     def __init__(self, label=None, required=False, nullable=False):
         self.required = required
         self.nullable = nullable
+        self.label = None
 
     @abstractmethod
     def validate(self, label):
@@ -269,11 +271,11 @@ def check_auth(request):
     if request['login'] == ADMIN_LOGIN:
         code_for_hash = (datetime.datetime.now().strftime("%Y%m%d%H") + ADMIN_SALT).encode('utf-8')
         digest = hashlib.sha512(code_for_hash).hexdigest()
-        digest = request['token']
+        # digest = request['token']
     else:
         code_for_hash = (request['account'] + request['login'] + SALT).encode('utf-8')
         digest = hashlib.sha512(code_for_hash).hexdigest()
-        digest = request['token']
+        # digest = request['token']
     if digest == request['token']:
         return True
     return False
@@ -297,7 +299,8 @@ def method_handler(request, ctx, store):
         error_dict = os_request.validate()
         if error_dict in list(EMPTY_VALUES):
             ctx["has"] = os_request.non_empty_fields
-            score_value = 43 if main_request.is_admin else get_score(store=None, **request['body']['arguments'])
+            # score_value = 43 if main_request.is_admin else get_score(store=None, **request['body']['arguments'])
+            score_value = 43 if main_request.is_admin else get_score(store=store, **request['body']['arguments'])
             return {"score": score_value}, OK
         else:
             return error_dict, INVALID_REQUEST
@@ -307,18 +310,24 @@ def method_handler(request, ctx, store):
         os_request = ClientsInterestsRequest(**request['body']['arguments'])
         error_dict = os_request.validate()
         if error_dict in list(EMPTY_VALUES):
-            ctx["nclients"] = len(request['body']['arguments']["client_ids"])
-
-            return os_request.get_interests(request['body']['arguments']["client_ids"]), OK
+            try:
+                interest = get_interests(store, request['body']['arguments']["client_ids"])
+                ctx["nclients"] = len(request['body']['arguments']["client_ids"])
+                return interest, OK
+            except:
+                return "Error occurred during get_interests request", INVALID_REQUEST
         else:
             return error_dict, INVALID_REQUEST
-
+    elif request['body']['method'] not in ['online_score', 'clients_interests']:
+        return "Unknown method. Only 'online_score' and 'clients_interests' are available", INVALID_REQUEST
+    else:
+        return "Unknown error is in request", INVALID_REQUEST
 
 class MainHTTPHandler(BaseHTTPRequestHandler):
     router = {
         "method": method_handler
     }
-    store = None
+    store = store.Store()
 
     def get_request_id(self, headers):
         return headers.get('HTTP_X_REQUEST_ID', uuid.uuid4().hex)

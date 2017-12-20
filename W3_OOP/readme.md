@@ -98,24 +98,38 @@ Response:
 
 ### Prerequisites
 
-Python version 3.6 and above
+1. Python version 3.6 and above
+2. Pytest library for running tests
 
-### Installing
+### Installing and running
 
-No special installation procedure is required. You have to copy the files from this repository in one folder
+1. No special installation procedure is required. You have to copy the files and folders from this repository in one folder
+2. You have to run the server from the main directory. You can do it with the following command:
+
+```
+python sample/api.py
+
+```
 
 ## Running the tests
 
-This section will be updated further
-
 ### Brief description
 
+1. Tests are grouped into two script and located in _tests_ directory. 
+2. Below we provide the general logic of each test inside test script.
+    * **test_field_types**. Actually inside of this script are unittest for every field class object     
+    * **test_integration**. These tests check an interaction between the main objects of api script. Include three sets:
+        * **TestResponseRequest**. It checks that the script process correctly the cases when invalid token or invalid request sent
+        * **TestOnlineScoreMethod** and **TestGetInterestMethod** check different scenarios related with correct work of these methods
 
 ### Deployement testing environment
-.
+In order to run pytests you have to do the following steps:
+1. Copy folder _tests_ into the same directory (hereafter main directory) where folder sample is located, 
+2. Run tests. For example:
 
 ```
-python -m unittest discover -v
+pytest -s -v tests
+
 ```
 
 
