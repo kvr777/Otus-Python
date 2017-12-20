@@ -99,7 +99,8 @@ Response:
 ### Prerequisites
 
 1. Python version 3.6 and above
-2. Pytest library for running tests
+2. mysqlclient 1.3.12
+3. Pytest library for running tests
 
 ### Installing and running
 
