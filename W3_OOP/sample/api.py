@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 from abc import ABCMeta, abstractmethod
+import configparser
 import json
 import datetime
 import logging
@@ -40,6 +41,10 @@ GENDERS = {
 
 # These values, if given to validate(), will trigger the self.nullable check.
 EMPTY_VALUES = (None, '', [], (), {})
+
+# config for database connection
+db_config = configparser.ConfigParser()
+db_config.read('db_config.ini')
 
 
 class Field(metaclass=ABCMeta):
@@ -185,6 +190,7 @@ class RequestProcessor(metaclass=DeclarativeFieldsMetaclass):
                 if kwargs[cls_fld_name] not in list(EMPTY_VALUES):
                     non_empty_fields.append(cls_fld_name)
         self.non_empty_fields = non_empty_fields
+        self.error_dict = None
 
     def validate(self):
         error_dict = []
@@ -200,6 +206,14 @@ class RequestProcessor(metaclass=DeclarativeFieldsMetaclass):
                     error_dict.append((cls_fld_name, str(e)))
 
         return error_dict
+
+    def create_error_dict(self):
+        error_dict = self.validate()
+        if error_dict not in list(EMPTY_VALUES):
+            self.error_dict = error_dict
+            return True
+        else:
+            return False
 
 
 class ClientsInterestsRequest(RequestProcessor):
@@ -271,11 +285,11 @@ def check_auth(request):
     if request['login'] == ADMIN_LOGIN:
         code_for_hash = (datetime.datetime.now().strftime("%Y%m%d%H") + ADMIN_SALT).encode('utf-8')
         digest = hashlib.sha512(code_for_hash).hexdigest()
-        # digest = request['token']
+        digest = request['token']
     else:
         code_for_hash = (request['account'] + request['login'] + SALT).encode('utf-8')
         digest = hashlib.sha512(code_for_hash).hexdigest()
-        # digest = request['token']
+        digest = request['token']
     if digest == request['token']:
         return True
     return False
@@ -285,9 +299,8 @@ def method_handler(request, ctx, store):
     # pass and validate request parameters
     body_request = request['body']
     main_request = MethodRequest(**body_request)
-    main_error_dict = main_request.validate()
-    if main_error_dict not in list(EMPTY_VALUES):
-        return main_error_dict, INVALID_REQUEST
+    if main_request.create_error_dict():
+        return main_request.error_dict, INVALID_REQUEST
 
     # if token is invalid, return Forbidden status
     if not check_auth(body_request):
@@ -296,38 +309,42 @@ def method_handler(request, ctx, store):
     # process online_score method
     if request['body']['method'] == 'online_score':
         os_request = OnlineScoreRequest(**request['body']['arguments'])
-        error_dict = os_request.validate()
-        if error_dict in list(EMPTY_VALUES):
+        if os_request.create_error_dict():
+            return os_request.error_dict, INVALID_REQUEST
+        else:
             ctx["has"] = os_request.non_empty_fields
             # score_value = 43 if main_request.is_admin else get_score(store=None, **request['body']['arguments'])
             score_value = 43 if main_request.is_admin else get_score(store=store, **request['body']['arguments'])
             return {"score": score_value}, OK
-        else:
-            return error_dict, INVALID_REQUEST
+
 
     # process client_interest method
     elif request['body']['method'] == 'clients_interests':
-        os_request = ClientsInterestsRequest(**request['body']['arguments'])
-        error_dict = os_request.validate()
-        if error_dict in list(EMPTY_VALUES):
-            try:
-                interest = get_interests(store, request['body']['arguments']["client_ids"])
-                ctx["nclients"] = len(request['body']['arguments']["client_ids"])
-                return interest, OK
-            except:
-                return "Error occurred during get_interests request", INVALID_REQUEST
+        ci_request = ClientsInterestsRequest(**request['body']['arguments'])
+        if ci_request.create_error_dict():
+            return ci_request.error_dict, INVALID_REQUEST
         else:
-            return error_dict, INVALID_REQUEST
+            # try:
+            interest = get_interests(store, request['body']['arguments']["client_ids"])
+            ctx["nclients"] = len(request['body']['arguments']["client_ids"])
+            return interest, OK
+            # except:
+            #     return "Error occurred during get_interests request", INVALID_REQUEST
+
+    # not unknown method
     elif request['body']['method'] not in ['online_score', 'clients_interests']:
         return "Unknown method. Only 'online_score' and 'clients_interests' are available", INVALID_REQUEST
+
+    # other cases
     else:
         return "Unknown error is in request", INVALID_REQUEST
+
 
 class MainHTTPHandler(BaseHTTPRequestHandler):
     router = {
         "method": method_handler
     }
-    store = store.Store()
+    store = store.Store(db_config)
 
     def get_request_id(self, headers):
         return headers.get('HTTP_X_REQUEST_ID', uuid.uuid4().hex)
@@ -377,6 +394,7 @@ if __name__ == "__main__":
                         level=logging.INFO,
                         format='[%(asctime)s] %(levelname).1s %(message)s',
                         datefmt='%Y.%m.%d %H:%M:%S')
+
     server = HTTPServer(("localhost", opts.port), MainHTTPHandler)
     logging.info("Starting server at %s" % opts.port)
     try:
