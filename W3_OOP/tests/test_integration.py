@@ -1,6 +1,7 @@
 import pytest
 from .context import store
 from .context import api
+from .context import scoring_new
 import datetime
 import hashlib
 
@@ -67,6 +68,7 @@ class TestOnlineScoreMethod:
         self.headers = {}
         self.good_store = store.Store(api.db_config)
         self.bad_store = store.Store(bad_config_db)
+        # self.get_score =
 
     def get_response_good_store(self, request):
         return api.method_handler({"body": request, "headers": self.headers}, self.context, self.good_store)
@@ -121,7 +123,7 @@ class TestOnlineScoreMethod:
         {"account": "hf", "login": "123", "method": "online_score", "token": "123", "arguments":
             {"phone": "71234567890", "email": "a@b.ru", "first_name": "Stan", "last_name": "Stupnikov",
              "birthday": "01.01.1991", "gender": 1}}], ids=["user-all_fields_disable_store"])
-    def test_check_cache_when_disable_store(self, query):
+    def test_check_cache_when_shutdown_store(self, query):
 
         '''
         at the beginnig we calculate score and think that it should be in cache. Then change db_config where db_store
@@ -132,8 +134,18 @@ class TestOnlineScoreMethod:
         params_initial = query
         params_initial['token'] = gen_good_auth(params_initial)
         result_initial, _ = self.get_response_good_store(params_initial)
-        result_new, _ = self.get_response_bad_store(params_initial)
-        assert float(result_initial['score']) == float(result_new['score'])
+        self.good_store.conn['store'] = None
+        self.good_store.conn['cache'] = None
+        print(params_initial['arguments'].keys())
+        result_new = scoring_new.get_score(store=self.good_store,
+                                           phone=params_initial['arguments'].get('phone', None),
+                                           email=params_initial['arguments'].get('email',None),
+                                           birthday=params_initial['arguments'].get('birthday', None),
+                                           gender=params_initial['arguments'].get('gender', None),
+                                           first_name=params_initial['arguments'].get('first_name', None),
+                                           last_name=params_initial['arguments'].get('last_name', None))
+
+        assert float(result_initial['score']) == float(result_new)
 
     @pytest.mark.parametrize("bad_request", [
         {"account": "hf", "login": "123", "method": "online_score", "token": "123", "arguments":

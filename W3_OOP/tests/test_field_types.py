@@ -31,7 +31,8 @@ def test_email_field_bad_input(input_data):
 
 
 # PHONE FIELDS
-@pytest.mark.parametrize("input_data", ["", "71234567890"], ids=[ "empty", "valid_phone"])
+@pytest.mark.parametrize("input_data", ["", "71234567890", 71234567890], ids=["empty", "valid_phone_text",
+                                                                              "valid_phone_number" ])
 def test_phone_field_good_input(input_data):
     test_phone_field = api.PhoneField()
     assert test_phone_field.validate(input_data) is None

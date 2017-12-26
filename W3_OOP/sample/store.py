@@ -62,7 +62,7 @@ class Store:
             cursor.execute("KILL CONNECTION %s", (conn_id,))
         conn.close()
 
-    def query(self, db_type, sql, type):
+    def query(self, db_type, sql, type, params=()):
         try:
             self.conn[db_type].ping()
         except:
@@ -72,7 +72,7 @@ class Store:
         kill_query_timer.start()
         try:
             with closing(self.conn[db_type].cursor()) as cursor:
-                cursor.execute(sql)
+                cursor.execute(sql, params)
                 if type == "SELECT":
                     return self.dictfetchall(cursor)
         except Exception as e:
@@ -81,11 +81,15 @@ class Store:
             kill_query_timer.cancel()
 
     def get(self, cids):
+        format_strings = ','.join(['%s'] * len(cids))
+        # query_text = 'SELECT client_id, GROUP_CONCAT(interest ORDER BY interest SEPARATOR " " ) AS interests ' \
+        #              'FROM cust_interests ' \
+        #              'GROUP BY client_id HAVING client_id IN (' + ','.join(map(str, cids)) + ')'
         query_text = 'SELECT client_id, GROUP_CONCAT(interest ORDER BY interest SEPARATOR " " ) AS interests ' \
                      'FROM cust_interests ' \
-                     'GROUP BY client_id HAVING client_id IN (' + ','.join(map(str, cids)) + ')'
+                     'GROUP BY client_id HAVING client_id IN (%s)' % format_strings
 
-        return json.dumps(self.query(sql=query_text, db_type='store', type="SELECT"))
+        return json.dumps(self.query(sql=query_text, params=cids, db_type='store', type="SELECT"))
 
     @staticmethod
     def dictfetchall(cursor):
@@ -97,12 +101,15 @@ class Store:
         ]
 
     def cache_get(self, key):
-        query_text = 'SELECT score, timeout FROM cache_score WHERE key_score= "%s" ' % key
-        query_res = self.query(db_type='cache', sql=query_text, type="SELECT")
+        query_text = 'SELECT score, timeout FROM cache_score WHERE key_score= "%s" '
+        try:
+            query_res = self.query(db_type='cache', params=[key], sql=query_text, type="SELECT")
+        except:
+            query_res=[]
         if len(query_res):
             if int(query_res[0]["timeout"]) < time.time():
-                del_query = 'DELETE FROM cache_score WHERE key_score= "%s" ' % key
-                self.query(db_type='cache', sql=del_query, type="DELETE")
+                del_query = 'DELETE FROM cache_score WHERE key_score= "%s" '
+                self.query(db_type='cache', params=[key], sql=del_query, type="DELETE")
                 # del self.cache[key]
                 return None
             else:
@@ -111,5 +118,5 @@ class Store:
             return None
 
     def cache_set(self, key, score, timeout=60 * 60):
-        query_text = 'INSERT INTO cache_score(key_score, score, timeout) VALUES ("%s", %s, %s);' % (key, score, time.time()+timeout)
-        self.query(db_type='cache', sql=query_text, type="INSERT")
+        query_text = 'INSERT INTO cache_score(key_score, score, timeout) VALUES ("%s", %s, %s);'
+        self.query(db_type='cache', params=(key, score, time.time()+timeout), sql=query_text, type="INSERT")
