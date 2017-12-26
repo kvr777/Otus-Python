@@ -11,6 +11,7 @@ import uuid
 from optparse import OptionParser
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import re
+import os
 import store
 from scoring_new import get_score, get_interests
 
@@ -44,8 +45,8 @@ EMPTY_VALUES = (None, '', [], (), {})
 
 # config for database connection
 db_config = configparser.ConfigParser()
-db_config.read('db_config.ini')
-
+# db_config.read('db_config.ini')
+db_config.read(os.path.abspath(os.path.join(os.path.dirname(__file__), 'db_config.ini')))
 
 class Field(metaclass=ABCMeta):
     """
@@ -285,18 +286,20 @@ def check_auth(request):
     if request['login'] == ADMIN_LOGIN:
         code_for_hash = (datetime.datetime.now().strftime("%Y%m%d%H") + ADMIN_SALT).encode('utf-8')
         digest = hashlib.sha512(code_for_hash).hexdigest()
-        digest = request['token']
+        # digest = request['token']
     else:
         code_for_hash = (request['account'] + request['login'] + SALT).encode('utf-8')
         digest = hashlib.sha512(code_for_hash).hexdigest()
-        digest = request['token']
+        # digest = request['token']
     if digest == request['token']:
         return True
     return False
 
 
 def method_handler(request, ctx, store):
-    # pass and validate request parameters
+    # pass and validate request
+    print(request)
+    print(request['headers'])
     body_request = request['body']
     main_request = MethodRequest(**body_request)
     if main_request.create_error_dict():
@@ -396,9 +399,11 @@ if __name__ == "__main__":
                         datefmt='%Y.%m.%d %H:%M:%S')
 
     server = HTTPServer(("localhost", opts.port), MainHTTPHandler)
+    # print(vars(server.RequestHandlerClass))
     logging.info("Starting server at %s" % opts.port)
     try:
         server.serve_forever()
+        # print(vars(server.RequestHandlerClass))
     except KeyboardInterrupt:
         pass
     server.server_close()

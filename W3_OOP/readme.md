@@ -116,16 +116,20 @@ python sample/api.py
 
 ### Brief description
 
-1. Tests are grouped into two script and located in _tests_ directory. 
+1. Tests are grouped into three scripts and located in _tests_ directory. 
 2. Below we provide the general logic of each test inside test script.
     * **test_field_types**. Actually inside of this script are unittest for every field class object     
     * **test_integration**. These tests check an interaction between the main objects of api script. Include three sets:
         * **TestResponseRequest**. It checks that the script process correctly the cases when invalid token or invalid request sent
         * **TestOnlineScoreMethod** and **TestGetInterestMethod** check different scenarios related with correct work of these methods
+    * **test_http_handler** - this script request the data from running server and test different scenarios of requests
 
 ### Deployement testing environment
 In order to run pytests you have to do the following steps:
 1. Copy folder _tests_ into the same directory (hereafter main directory) where folder sample is located, 
+2. Run http server from source/api.py with the following parameters:
+    - ip-address http://127.0.0.1
+    - port 8080
 2. Run tests. For example:
 
 ```

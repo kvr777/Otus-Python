@@ -13,13 +13,23 @@ def gen_good_auth(request_body):
         code_for_hash = (request_body['account'] + request_body['login'] + api.SALT).encode('utf-8')
         return hashlib.sha512(code_for_hash).hexdigest()
 
+bad_config_db = {'MAIN':{'host':"localhost",
+                         'user': "root",
+                         'password': "kromanov",
+                         'db_store': "",
+                         'db_cache':"otus_db",
+                         'query_timeout': 5,
+                         'db_connect_timeout': 5,
+                         'reconnect': 10
+                         }}
+
 
 class TestResponseRequest:
     @pytest.fixture(autouse=True)
     def setup(self):
         self.context = {}
         self.headers = {}
-        self.store = store.Store()
+        self.store = store.Store(api.db_config)
 
     def get_response(self, request):
         return api.method_handler({"body": request, "headers": self.headers}, self.context, self.store)
@@ -36,13 +46,13 @@ class TestResponseRequest:
 
 
 
-    @pytest.mark.parametrize("bad_request", [
+    @pytest.mark.parametrize("invalid_request", [
         # {"account": "horns&hoofs", "login": "h&f", "method": "online_score", "token": "", "arguments": {}},
         {"account": "horns&hoofs", "login": "h&f", "method": "online_score", "token": "sdd", "arguments": {}},
         {"account": "horns&hoofs", "login": "admin", "method": "offline_score", "token":"", "arguments": {}},
         ], ids=["empty_arguments", "invalid method"])
-    def test_invalid_request(self, bad_request):
-        param_input = bad_request
+    def test_invalid_request(self, invalid_request):
+        param_input = invalid_request
         param_input['token'] = gen_good_auth(param_input)
         error_msg, result_code = self.get_response(param_input)
         expected_output = api.INVALID_REQUEST
@@ -55,10 +65,14 @@ class TestOnlineScoreMethod:
     def setup(self):
         self.context = {}
         self.headers = {}
-        self.store = store.Store()
+        self.good_store = store.Store(api.db_config)
+        self.bad_store = store.Store(bad_config_db)
 
-    def get_response(self, request):
-        return api.method_handler({"body": request, "headers": self.headers}, self.context, self.store)
+    def get_response_good_store(self, request):
+        return api.method_handler({"body": request, "headers": self.headers}, self.context, self.good_store)
+
+    def get_response_bad_store(self, request):
+        return api.method_handler({"body": request, "headers": self.headers}, self.context, self.bad_store)
 
     @pytest.mark.parametrize(("query", "expected_output"), [
         ({ "account": "hf", "login": "123", "method": "online_score", "token": "123", "arguments":
@@ -79,7 +93,7 @@ class TestOnlineScoreMethod:
         '''
         param_input, expected_output = query, expected_output
         param_input['token'] = gen_good_auth(param_input)
-        result, _= self.get_response(param_input)
+        result, _ = self.get_response_good_store(param_input)
         assert float(result['score']) == float(expected_output)
 
     @pytest.mark.parametrize(("query", "field_to_remove"), [
@@ -87,7 +101,7 @@ class TestOnlineScoreMethod:
             {"phone": "71234567890", "email": "a@b.ru", "first_name": "Stan", "last_name": "Stupnikov",
              "birthday": "01.01.1991", "gender": 1}}, "email"),
         ], ids=["user-all_fields_remove_last_name"])
-    def test_check_cache(self, query, field_to_remove):
+    def test_check_cache_when_change_parameters(self, query, field_to_remove):
 
         '''
         at the beginnig we calculate score and think that it should be in cache. Then remove the field that should
@@ -97,10 +111,28 @@ class TestOnlineScoreMethod:
 
         params_initial, field_to_remove = query, field_to_remove
         params_initial['token'] = gen_good_auth(params_initial)
-        result_initial, _ = self.get_response(params_initial)
+        result_initial, _ = self.get_response_good_store(params_initial)
         params_new = params_initial
         params_new[field_to_remove] = ""
-        result_new, _ = self.get_response(params_new)
+        result_new, _ = self.get_response_good_store(params_new)
+        assert float(result_initial['score']) == float(result_new['score'])
+
+    @pytest.mark.parametrize("query", [
+        {"account": "hf", "login": "123", "method": "online_score", "token": "123", "arguments":
+            {"phone": "71234567890", "email": "a@b.ru", "first_name": "Stan", "last_name": "Stupnikov",
+             "birthday": "01.01.1991", "gender": 1}}], ids=["user-all_fields_disable_store"])
+    def test_check_cache_when_disable_store(self, query):
+
+        '''
+        at the beginnig we calculate score and think that it should be in cache. Then change db_config where db_store
+        is empty and rerun calculation. Now, though we don't have an access to store db, we have to get result from
+        cache)
+        '''
+
+        params_initial = query
+        params_initial['token'] = gen_good_auth(params_initial)
+        result_initial, _ = self.get_response_good_store(params_initial)
+        result_new, _ = self.get_response_bad_store(params_initial)
         assert float(result_initial['score']) == float(result_new['score'])
 
     @pytest.mark.parametrize("bad_request", [
@@ -118,7 +150,7 @@ class TestOnlineScoreMethod:
 
         param_input = bad_request
         param_input['token'] = gen_good_auth(param_input)
-        error_msg, result_code = self.get_response(param_input)
+        error_msg, result_code = self.get_response_good_store(param_input)
         expected_output = api.INVALID_REQUEST
         print(error_msg)
         assert expected_output == result_code
@@ -129,27 +161,39 @@ class TestGetInterestMethod:
     def setup(self):
         self.context = {}
         self.headers = {}
-        self.store = store.Store()
+        self.good_store = store.Store(api.db_config)
+        self.bad_store = store.Store(bad_config_db)
 
-    def get_response(self, request):
-        return api.method_handler({"body": request, "headers": self.headers}, self.context, self.store)
+    def get_response_good_store(self, request):
+        return api.method_handler({"body": request, "headers": self.headers}, self.context, self.good_store)
+
+    def get_response_bad_store(self, request):
+        return api.method_handler({"body": request, "headers": self.headers}, self.context, self.bad_store)
 
     @pytest.mark.parametrize(("query", "expected_output"), [
-        ({"account": "horns&hoofs", "login": "ff", "method": "clients_interests", "token":"",
+        ({"account": "horns&hoofs", "login": "ff", "method": "clients_interests", "token": "",
          "arguments": {"client_ids": [1, 2], "date": "20.07.2017"}},
-         {'1': ['cars', 'pets', 'sport'], '2': ['hi-tech', 'music', 'tv']}),
+         [{'client_id': 1, 'interests': 'cars pets sport'}, {'client_id': 2, 'interests': 'hi-tech music tv'}]),
         ({"account": "horns&hoofs", "login": "ff", "method": "clients_interests", "token": "",
-          "arguments": {"client_ids": [1], "date": ""}}, {'1': ['cars', 'pets', 'sport']}),
+          "arguments": {"client_ids": [1], "date": ""}}, [{'client_id': 1, 'interests': 'cars pets sport'}]),
         ({"account": "horns&hoofs", "login": "ff", "method": "clients_interests", "token": "",
-          "arguments": {"client_ids": [6], "date": "20.07.2017"}}, {})
+          "arguments": {"client_ids": [6], "date": "20.07.2017"}}, [])
     ],
         ids=["existing_ids_with_date", "existing_ids_without_date", "no_existing_id_with_date"])
-    def test_correct_score_calculation(self, query, expected_output):
+    def test_correct_query(self, query, expected_output):
         '''
         here we could enhance tests by checking every component of score formula. But because it educational example,
         we don't do it
         '''
         param_input, expected_output = query, expected_output
         param_input['token'] = gen_good_auth(param_input)
-        result, _= self.get_response(param_input)
+        result, _ = self.get_response_good_store(param_input)
         assert result == expected_output
+
+    def test_try_get_interests_from_bad_store(self):
+        param_input = {"account": "horns&hoofs", "login": "ff", "method": "clients_interests", "token": "",
+         "arguments": {"client_ids": [1, 2], "date": "20.07.2017"}}
+        param_input['token'] = gen_good_auth(param_input)
+        with pytest.raises(Exception):
+            result, _ = self.get_response_bad_store(param_input)
+
