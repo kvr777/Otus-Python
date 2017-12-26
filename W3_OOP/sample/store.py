@@ -105,7 +105,8 @@ class Store:
         try:
             query_res = self.query(db_type='cache', params=[key], sql=query_text, type="SELECT")
         except:
-            query_res=[]
+            query_res = []
+            logging.warning("cannot access to cache database")
         if len(query_res):
             if int(query_res[0]["timeout"]) < time.time():
                 del_query = 'DELETE FROM cache_score WHERE key_score= "%s" '
@@ -118,5 +119,8 @@ class Store:
             return None
 
     def cache_set(self, key, score, timeout=60 * 60):
-        query_text = 'INSERT INTO cache_score(key_score, score, timeout) VALUES ("%s", %s, %s);'
-        self.query(db_type='cache', params=(key, score, time.time()+timeout), sql=query_text, type="INSERT")
+        try:
+            query_text = 'INSERT INTO cache_score(key_score, score, timeout) VALUES ("%s", %s, %s);'
+            self.query(db_type='cache', params=(key, score, time.time()+timeout), sql=query_text, type="INSERT")
+        except:
+            logging.warning("Cannot save to cache database")

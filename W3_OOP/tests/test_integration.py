@@ -123,29 +123,39 @@ class TestOnlineScoreMethod:
         {"account": "hf", "login": "123", "method": "online_score", "token": "123", "arguments":
             {"phone": "71234567890", "email": "a@b.ru", "first_name": "Stan", "last_name": "Stupnikov",
              "birthday": "01.01.1991", "gender": 1}}], ids=["user-all_fields_disable_store"])
-    def test_check_cache_when_shutdown_store(self, query):
-
-        '''
-        at the beginnig we calculate score and think that it should be in cache. Then change db_config where db_store
-        is empty and rerun calculation. Now, though we don't have an access to store db, we have to get result from
-        cache)
-        '''
+    def test_check_online_score_restore_connection(self, query):
 
         params_initial = query
         params_initial['token'] = gen_good_auth(params_initial)
-        result_initial, _ = self.get_response_good_store(params_initial)
-        self.good_store.conn['store'] = None
         self.good_store.conn['cache'] = None
-        print(params_initial['arguments'].keys())
         result_new = scoring_new.get_score(store=self.good_store,
                                            phone=params_initial['arguments'].get('phone', None),
-                                           email=params_initial['arguments'].get('email',None),
+                                           email=params_initial['arguments'].get('email', None),
                                            birthday=params_initial['arguments'].get('birthday', None),
                                            gender=params_initial['arguments'].get('gender', None),
                                            first_name=params_initial['arguments'].get('first_name', None),
                                            last_name=params_initial['arguments'].get('last_name', None))
 
-        assert float(result_initial['score']) == float(result_new)
+        # print(self.good_store.conn['cache'])
+        assert self.good_store.conn['cache'] is not None
+
+    @pytest.mark.parametrize("query", [
+        {"account": "hf", "login": "123", "method": "online_score", "token": "123", "arguments":
+            {"phone": "71234567890", "email": "a@b.ru", "first_name": "Stan", "last_name": "Stupnikov",
+             "birthday": "01.01.1991", "gender": 1}}], ids=["user-all_fields_disable_store"])
+    def test_online_score__works_when_store_is_unavailable(self, query):
+        params_initial = query
+        params_initial['token'] = gen_good_auth(params_initial)
+        self.good_store.db_cache = 'fake_db'
+        result_new = scoring_new.get_score(store=self.good_store,
+                                           phone=params_initial['arguments'].get('phone', None),
+                                           email=params_initial['arguments'].get('email', None),
+                                           birthday=params_initial['arguments'].get('birthday', None),
+                                           gender=params_initial['arguments'].get('gender', None),
+                                           first_name=params_initial['arguments'].get('first_name', None),
+                                           last_name=params_initial['arguments'].get('last_name', None))
+
+        assert result_new > 0
 
     @pytest.mark.parametrize("bad_request", [
         {"account": "hf", "login": "123", "method": "online_score", "token": "123", "arguments":

@@ -298,8 +298,6 @@ def check_auth(request):
 
 def method_handler(request, ctx, store):
     # pass and validate request
-    print(request)
-    print(request['headers'])
     body_request = request['body']
     main_request = MethodRequest(**body_request)
     if main_request.create_error_dict():
@@ -327,12 +325,12 @@ def method_handler(request, ctx, store):
         if ci_request.create_error_dict():
             return ci_request.error_dict, INVALID_REQUEST
         else:
-            # try:
-            interest = get_interests(store, request['body']['arguments']["client_ids"])
-            ctx["nclients"] = len(request['body']['arguments']["client_ids"])
-            return interest, OK
-            # except:
-            #     return "Error occurred during get_interests request", INVALID_REQUEST
+            try:
+                interest = get_interests(store, request['body']['arguments']["client_ids"])
+                ctx["nclients"] = len(request['body']['arguments']["client_ids"])
+                return interest, OK
+            except:
+                return "Error occurred during get_interests request", INVALID_REQUEST
 
     # not unknown method
     elif request['body']['method'] not in ['online_score', 'clients_interests']:
@@ -399,11 +397,9 @@ if __name__ == "__main__":
                         datefmt='%Y.%m.%d %H:%M:%S')
 
     server = HTTPServer(("localhost", opts.port), MainHTTPHandler)
-    # print(vars(server.RequestHandlerClass))
     logging.info("Starting server at %s" % opts.port)
     try:
         server.serve_forever()
-        # print(vars(server.RequestHandlerClass))
     except KeyboardInterrupt:
         pass
     server.server_close()
