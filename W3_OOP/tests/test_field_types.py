@@ -2,25 +2,6 @@ import pytest
 from .context import api
 
 
-# fields object to validate
-
-              # at least have @. But here is more rigid reqs. It Should be like email
-             # begins with 7. Have 11 digits
-               # DD.MM.YYYY
-            # DD.MM.YYYY no more than 70 years from current year
-          # should be in [1,2,3]
-       # should be dict
-      # should be a list
-
-
-def validate_field_generic(input_data, should_validate, test_field):
-    if not should_validate:
-        with pytest.raises(ValueError):
-            test_field.validate(input_data)
-    else:
-        assert test_field.validate(input_data) is None
-
-
 # CHAR FIELDS
 @pytest.mark.parametrize("input_data", ["text", ""], ids=["text", "empty"])
 def test_char_field_good_input(input_data):
