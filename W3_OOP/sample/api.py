@@ -175,7 +175,7 @@ class DeclarativeFieldsMetaclass(type):
         return new_class
 
 
-class RequestProcessor(metaclass=DeclarativeFieldsMetaclass):
+class BasicClassRequest(metaclass=DeclarativeFieldsMetaclass):
     """
     This class accepts dict with argument values for fields, set values to fields and stores names fields that
     are not null
@@ -217,7 +217,7 @@ class RequestProcessor(metaclass=DeclarativeFieldsMetaclass):
             return False
 
 
-class ClientsInterestsRequest(RequestProcessor):
+class ClientsInterestsRequest(BasicClassRequest):
     """
     Here we initiate and validate the arguments passed by clients_interests request
     with help of get_interests func we return interest dict
@@ -226,8 +226,8 @@ class ClientsInterestsRequest(RequestProcessor):
     client_ids = ClientIDsField(required=True)
     date = DateField(required=False, nullable=True)
 
-    def validate(self):
-        return super().validate()
+    # def validate(self):
+    #     return super().validate()
 
     def get_interests(self, interest_list):
         response_dict = {}
@@ -236,7 +236,7 @@ class ClientsInterestsRequest(RequestProcessor):
         return response_dict
 
 
-class OnlineScoreRequest(RequestProcessor):
+class OnlineScoreRequest(BasicClassRequest):
     """
     Here we initiate and validate the arguments passed by online_score request.
     validate func get dict with general validation and do validation that is specific for online_score request
@@ -263,7 +263,7 @@ class OnlineScoreRequest(RequestProcessor):
             return basic_error_dict
 
 
-class MethodRequest(RequestProcessor):
+class MethodRequest(BasicClassRequest):
     """
     Here we initiate and validate the all arguments passed by POST request.
     is_admin property check and store the boolean which indicate does it admin login or not
@@ -297,6 +297,8 @@ def check_auth(request):
 
 
 def method_handler(request, ctx, store):
+    print(request)
+    print(request['headers'])
     # pass and validate request
     body_request = request['body']
     main_request = MethodRequest(**body_request)
@@ -351,12 +353,16 @@ class MainHTTPHandler(BaseHTTPRequestHandler):
         return headers.get('HTTP_X_REQUEST_ID', uuid.uuid4().hex)
 
     def do_POST(self):
+
+        print(vars(self))
+
         response, code = {}, OK
         context = {"request_id": self.get_request_id(self.headers)}
         request = None
         try:
             data_string = self.rfile.read(int(self.headers['Content-Length']))
             request = json.loads(data_string)
+            print(request)
         except:
             code = BAD_REQUEST
 
@@ -382,6 +388,7 @@ class MainHTTPHandler(BaseHTTPRequestHandler):
         context.update(r)
         logging.info(context)
         output = json.dumps(r)
+        # print(output)
         self.wfile.write(output.encode('utf-8'))
         return
 
@@ -397,9 +404,11 @@ if __name__ == "__main__":
                         datefmt='%Y.%m.%d %H:%M:%S')
 
     server = HTTPServer(("localhost", opts.port), MainHTTPHandler)
+    # print(vars(server))
     logging.info("Starting server at %s" % opts.port)
     try:
         server.serve_forever()
+        # print(vars(server))
     except KeyboardInterrupt:
         pass
     server.server_close()

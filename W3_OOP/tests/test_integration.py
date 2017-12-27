@@ -216,6 +216,6 @@ class TestGetInterestMethod:
         param_input = {"account": "horns&hoofs", "login": "ff", "method": "clients_interests", "token": "",
          "arguments": {"client_ids": [1, 2], "date": "20.07.2017"}}
         param_input['token'] = gen_good_auth(param_input)
-        with pytest.raises(Exception):
-            result, _ = self.get_response_bad_store(param_input)
+        result, code = self.get_response_bad_store(param_input)
+        assert code == 422
 
