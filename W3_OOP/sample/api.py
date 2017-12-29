@@ -45,8 +45,8 @@ EMPTY_VALUES = (None, '', [], (), {})
 
 # config for database connection
 db_config = configparser.ConfigParser()
-# db_config.read('db_config.ini')
 db_config.read(os.path.abspath(os.path.join(os.path.dirname(__file__), 'db_config.ini')))
+
 
 class Field(metaclass=ABCMeta):
     """
@@ -56,7 +56,7 @@ class Field(metaclass=ABCMeta):
     def __init__(self, label=None, required=False, nullable=False):
         self.required = required
         self.nullable = nullable
-        self.label = None
+        self.label = label
 
     @abstractmethod
     def validate(self, label):
@@ -226,14 +226,22 @@ class ClientsInterestsRequest(BasicClassRequest):
     client_ids = ClientIDsField(required=True)
     date = DateField(required=False, nullable=True)
 
-    # def validate(self):
-    #     return super().validate()
-
     def get_interests(self, interest_list):
         response_dict = {}
         for client in interest_list:
             response_dict[client] = get_interests(store=None, cid=client)
         return response_dict
+
+    def get_result(self, ctx, store, **request):
+        if self.create_error_dict():
+            return self.error_dict, INVALID_REQUEST
+        else:
+            try:
+                interest = get_interests(store, request['client_ids'])
+                ctx['nclients'] = len(request['client_ids'])
+                return interest, OK
+            except:
+                return "Error occurred during get_interests request", INVALID_REQUEST
 
 
 class OnlineScoreRequest(BasicClassRequest):
@@ -261,6 +269,14 @@ class OnlineScoreRequest(BasicClassRequest):
                                                         'of the following fields: email-phone, '
                                                         'first_name-last_name, gender-birthday'))
             return basic_error_dict
+
+    def get_result(self, ctx, store, is_admin, **request):
+        if self.create_error_dict():
+            return self.error_dict, INVALID_REQUEST
+        else:
+            ctx["has"] = self.non_empty_fields
+            score_value = 43 if is_admin else get_score(store=store, **request)
+            return {"score": score_value}, OK
 
 
 class MethodRequest(BasicClassRequest):
@@ -297,42 +313,26 @@ def check_auth(request):
 
 
 def method_handler(request, ctx, store):
-    print(request)
-    print(request['headers'])
     # pass and validate request
-    body_request = request['body']
-    main_request = MethodRequest(**body_request)
+    main_request = MethodRequest(**request['body'])
     if main_request.create_error_dict():
         return main_request.error_dict, INVALID_REQUEST
 
     # if token is invalid, return Forbidden status
-    if not check_auth(body_request):
+    if not check_auth(request['body']):
         return "Forbidden", FORBIDDEN
 
     # process online_score method
     if request['body']['method'] == 'online_score':
-        os_request = OnlineScoreRequest(**request['body']['arguments'])
-        if os_request.create_error_dict():
-            return os_request.error_dict, INVALID_REQUEST
-        else:
-            ctx["has"] = os_request.non_empty_fields
-            # score_value = 43 if main_request.is_admin else get_score(store=None, **request['body']['arguments'])
-            score_value = 43 if main_request.is_admin else get_score(store=store, **request['body']['arguments'])
-            return {"score": score_value}, OK
-
+        return OnlineScoreRequest(**request['body']['arguments']).get_result(ctx, store,
+                                                                             main_request.is_admin,
+                                                                             **request['body']['arguments'])
 
     # process client_interest method
     elif request['body']['method'] == 'clients_interests':
-        ci_request = ClientsInterestsRequest(**request['body']['arguments'])
-        if ci_request.create_error_dict():
-            return ci_request.error_dict, INVALID_REQUEST
-        else:
-            try:
-                interest = get_interests(store, request['body']['arguments']["client_ids"])
-                ctx["nclients"] = len(request['body']['arguments']["client_ids"])
-                return interest, OK
-            except:
-                return "Error occurred during get_interests request", INVALID_REQUEST
+        return ClientsInterestsRequest(**request['body']['arguments']).get_result(ctx, store,
+                                                                                  **request['body']['arguments'])
+
 
     # not unknown method
     elif request['body']['method'] not in ['online_score', 'clients_interests']:
@@ -354,15 +354,12 @@ class MainHTTPHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
 
-        print(vars(self))
-
         response, code = {}, OK
         context = {"request_id": self.get_request_id(self.headers)}
         request = None
         try:
             data_string = self.rfile.read(int(self.headers['Content-Length']))
             request = json.loads(data_string)
-            print(request)
         except:
             code = BAD_REQUEST
 
@@ -404,11 +401,9 @@ if __name__ == "__main__":
                         datefmt='%Y.%m.%d %H:%M:%S')
 
     server = HTTPServer(("localhost", opts.port), MainHTTPHandler)
-    # print(vars(server))
     logging.info("Starting server at %s" % opts.port)
     try:
         server.serve_forever()
-        # print(vars(server))
     except KeyboardInterrupt:
         pass
     server.server_close()
