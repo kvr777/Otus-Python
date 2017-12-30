@@ -17,84 +17,115 @@ def gen_good_auth(request_body):
 
 class MockedHttpHandler(api.MainHTTPHandler):
 
-    def __init__(self, request, path):
-        self.client_address = ""
-        self.server = ""
-        try:
-            request['token'] = gen_good_auth(request)
-        except:
-            pass
-        self.rfile = io.BytesIO(json.dumps(request).encode('utf-8'))
-        self.headers = {'Content-Type': 'application/json',}
-        self.headers['Content-Length'] = int(len(str(request)))
+    def __init__(self):
+        self.rfile = io.BytesIO()
         self.wfile = io.BytesIO()
-        self.client_address = ('0.0.0.0', 50631)
-        self.command = 'POST'
-        self.request_version = 'HTTP/1.1'
-        self.path = path #'/method/'
-        self.requestline = self.command+self.path+self.request_version #'POST /method/ HTTP/1.1'
-        self.close_connection = True
+        self.headers = {}
+        self.responses = {'code': None, 'headers':{}}
 
-    def get_request_id(self, headers):
-        api.MainHTTPHandler.get_request_id(self, headers)
+    def send_response(self, code):
+        self.responses['code'] = code
 
-    def send_response(self, code, message=None):
-        api.MainHTTPHandler.send_response(self, code, message=None)
-
-    def send_header(self, keyword, value):
-        api.MainHTTPHandler.send_header(self, keyword, value)
+    def send_header(self, h, value):
+        self.responses['headers']['h']= value
 
 
     def end_headers(self):
-        api.MainHTTPHandler.end_headers(self)
+        pass
 
-    def do_POST(self):
-        api.MainHTTPHandler.do_POST(self)
-        output = self.wfile.getvalue()
-        return output.decode('utf-8').split()[1]
-
-
-
-
-@pytest.mark.parametrize(("request_body", "path"),
-                         [({"account": "hornshoofs", "login": "hf","method": "online_score", "token": "",
-                           "arguments": {"phone": "79175002040", "email": "stupnikov@otus.ru",
-                                         "first_name": "stanislav", "last_name": "stupnikov",
-                                         "birthday": "01.01.1990", "gender": 1}}, '/method/')],
-                         ids=['valid_request-valid_path'])
-def test_http_handler_valid_request(request_body, path):
-    response = MockedHttpHandler(request_body, path).do_POST()
-    assert int(response) == 200
+    def send_request(self, r, path="method/", req_id=42):
+        self.path = path
+        try:
+            jrequest = json.dumps(r)
+            self.rfile.write(jrequest.encode('utf-8'))
+        except:
+            self.rfile.write("".encode('utf-8'))
+        self.rfile.seek(0)
+        try:
+            self.headers["Content-Length"] = len(jrequest)
+        except:
+            self.headers["Content-Length"] = 'Bad Request'
+        self.headers["HTTP_X_REQUEST_ID"] = req_id
 
 
-@pytest.mark.parametrize(("request_body", "path"),
-                         [({"account": "hornshoofs", "login": "hf","method": "online_score", "token": "",
-                           "arguments": {"phone": "79175002040", "email": "stupnikov@otus.ru",
-                                         "first_name": "stanislav", "last_name": "stupnikov",
-                                         "birthday": "01.01.1990", "gender": 1}}, '/met/')],
-                         ids=['valid_request-not_valid_path'])
-def test_http_handler_invalid_path(request_body, path):
-    response = MockedHttpHandler(request_body, path).do_POST()
-    assert int(response) == 404
+class TestResponseRequest:
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        self.handler = MockedHttpHandler()
 
 
-@pytest.mark.parametrize(("request_body", "path"),
-                         [({"account": "hornshoofs", "login": "hf","method": "online_score", "token": "",
-                           "arguments": {"pne": "79175002040", "email": "stupnikov@otus.ru",
-                                         "first_name": "stanislav", "last_name": "stupnikov",
-                                         "birthday": "01.01.1990", "gender": 1}}, '/method/')],
-                         ids=['pne instead of phone in body field'])
-def test_http_handler_internal_error(request_body, path):
-    response = MockedHttpHandler(request_body, path).do_POST()
-    assert int(response) == 500
+    @pytest.mark.parametrize(("request_body", "score_result"),
+                             [({"account": "hornshoofs", "login": "hf","method": "online_score", "token": "",
+                               "arguments": {"phone": "79175002040", "email": "stupnikov@otus.ru",
+                                             "first_name": "stanislav", "last_name": "stupnikov",
+                                             "birthday": "01.01.1990", "gender": 1}}, 5)],
+                             ids=['valid_request-valid_path'])
+    def test_http_handler_valid_request(self, request_body, score_result):
+        request_body['token'] = gen_good_auth(request_body)
+        self.handler.send_request(request_body)
+        self.handler.do_POST()
+        response = json.loads(self.handler.wfile.getvalue().decode())
+        assert isinstance(response, dict)
+        assert list(response.keys()) == ['response', 'code']
+        assert response['code'] == 200
+        assert response['response'] == {'score': score_result}
 
 
-@pytest.mark.parametrize(("request_body", "path"),
-                         [({'"account"': "hornshoofs", "login": "hf","method": "online_score", "token": "",
-                           "arguments": {"pne": "79175002040", "email": "stupnikov@otus.ru",
-                                         "first_name": "stanislav", "last_name": "stupnikov",
-                                         "birthday": "01.01.1990", "gender": 1}}, '/method/')],
-                         ids=['account_field_with_excessive_quotes'])
-def test_http_handler_bad_request(request_body, path):
-    response = MockedHttpHandler(request_body, path).do_POST()
-    assert int(response) == 400
+    @pytest.mark.parametrize(("request_body"),
+                             [{"account": "hornshoofs", "login": "hf", "method": "online_score", "token": "",
+                               "arguments": {"phone": "79175002040", "email": "stupnikov@otus.ru",
+                                             "first_name": "stanislav", "last_name": "stupnikov",
+                                             "birthday": "01.01.1990", "gender": 1}}],
+                             ids=['valid_request-not_valid_path'])
+    def test_http_handler_invalid_path(self, request_body):
+        request_body['token'] = gen_good_auth(request_body)
+        self.handler.send_request(request_body, path='/invalid')
+        self.handler.do_POST()
+        response = json.loads(self.handler.wfile.getvalue().decode())
+        assert isinstance(response, dict)
+        assert list(response.keys()) == ['error', 'code']
+        assert response['code'] == 404
+        assert response['error'] == 'Not Found'
+
+    @pytest.mark.parametrize(("request_body"),
+                             [{"account": "hornshoofs", "login": "hf", "method": "online_score", "token": "",
+                               "arguments": {"phone": "79175002040", "email": "stupnikov@otus.ru",
+                                             "first_name": "stanislav", "last_name": "stupnikov",
+                                             "birthday": "01.01.1990", "gender": 1}}],
+                             ids=['invalid_request-empty_token'])
+    def test_http_handler_bad_auth(self, request_body):
+        self.handler.send_request(request_body)
+        self.handler.do_POST()
+        response = json.loads(self.handler.wfile.getvalue().decode())
+        assert isinstance(response, dict)
+        assert list(response.keys()) == ['error', 'code']
+        assert response['code'] == 403
+        assert response['error'] == 'Forbidden'
+
+    @pytest.mark.parametrize(("request_body"),
+                             [{"account": "hornshoofs", "login": "hf", "method": "online_score", "token": "",
+                               "arguments": {"pne": "79175002040", "email": "stupnikov@otus.ru",
+                                             "first_name": "stanislav", "last_name": "stupnikov",
+                                             "birthday": "01.01.1990", "gender": 1}}],
+                             ids=['unexpected_argument_case_pne_instead_of_phone'])
+    def test_http_handler_internal_server_error(self, request_body):
+        request_body['token'] = gen_good_auth(request_body)
+        self.handler.send_request(request_body)
+        self.handler.do_POST()
+        response = json.loads(self.handler.wfile.getvalue().decode())
+        assert isinstance(response, dict)
+        assert list(response.keys()) == ['error', 'code']
+        assert response['code'] == 500
+        assert response['error'] == 'Internal Server Error'
+
+    @pytest.mark.parametrize(("request_body"),
+                             [''.encode('utf-8')],
+                             ids=['send_bytes_instead_of_string'])
+    def test_http_handler_bad_request(self, request_body):
+        self.handler.send_request(request_body)
+        self.handler.do_POST()
+        response = json.loads(self.handler.wfile.getvalue().decode())
+        assert isinstance(response, dict)
+        assert list(response.keys()) == ['error', 'code']
+        assert response['code'] == 400
+        assert response['error'] == 'Bad Request'

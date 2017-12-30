@@ -20,9 +20,8 @@ class Store:
         self.query_timeout = int(db_config['MAIN']['query_timeout'])
         self.connect_timeout = int(db_config['MAIN']['db_connect_timeout'])
         self.reconnect_max_attempts = int(db_config['MAIN']['db_connect_timeout'])
-        self.conn = {}
-        self.conn['store'] = conn_store
-        self.conn['cache'] = conn_cache
+        self.conn_store = conn_store
+        self.conn_cache = conn_cache
 
     def get_connection(self, db_type):
         db = self.db_store if db_type == 'store' else self.db_cache
@@ -36,16 +35,21 @@ class Store:
 
     def connect(self, db_type):
         attempt = 1
+        connection = self.conn_store if db_type == 'store' else self.conn_cache
         while True:
             try:
-                if not self.conn[db_type]:
-                    self.conn[db_type] = self.get_connection(db_type)
-                    self.conn[db_type].autocommit(True)
-                    with closing(self.conn[db_type].cursor()) as cursor:
-                        cursor.execute("SELECT CONNECTION_ID()")
-                        self.conn[db_type].id = cursor.fetchone()[0]
-                    logging.info("Successfully connected to {} database with id {}".format(db_type, self.conn[db_type].id))
-                    break
+                if not connection:
+                    connection = self.get_connection(db_type)
+                    connection.autocommit(True)
+
+                    # with closing(self.conn[db_type].cursor()) as cursor:
+                    #     cursor.execute("SELECT CONNECTION_ID()")
+                    #     self.conn[db_type].id = cursor.fetchone()[0]
+                    logging.info("Successfully connected to {} database".format(db_type,
+                                                                                           # self.conn[db_type].id
+                                                                                           )
+                                 )
+                    return connection
             except Exception as e:
                 if attempt > self.reconnect_max_attempts:
                     raise
@@ -55,36 +59,44 @@ class Store:
                 self.conn[db_type] = None
                 # self.connect()
 
-    def _harakiri(self, conn_id, db_type):
-        conn = self.get_connection(db_type)
-        logging.warning("Killing {}".format(conn_id))
-        with closing(conn.cursor()) as cursor:
-            cursor.execute("KILL CONNECTION %s", (conn_id,))
-        conn.close()
+    # def _harakiri(self, conn_id, db_type):
+    #     conn = self.get_connection(db_type)
+    #     logging.warning("Killing {}".format(conn_id))
+    #     with closing(conn.cursor()) as cursor:
+    #         cursor.execute("KILL CONNECTION %s", (conn_id,))
+    #     conn.close()
 
     def query(self, db_type, sql, type, params=()):
-        try:
-            self.conn[db_type].ping()
-        except:
-            self.connect(db_type)
 
-        kill_query_timer = threading.Timer(self.query_timeout, self._harakiri, args=(self.conn[db_type].id,))
-        kill_query_timer.start()
+        connection = self.conn_store if db_type == 'store' else self.conn_cache
         try:
-            with closing(self.conn[db_type].cursor()) as cursor:
+            connection.ping()
+        except:
+            if db_type == 'store':
+                self.conn_store = self.connect(db_type)
+                self.conn_store.autocommit(True)
+                connection = self.conn_store
+            else:
+                self.conn_cache = self.connect(db_type)
+                self.conn_cache.autocommit(True)
+                connection = self.conn_cache
+
+        # kill_query_timer = threading.Timer(self.query_timeout,
+        #                                    # self._harakiri,
+        #                                    args=(self.conn[db_type].id,))
+        # kill_query_timer.start()
+        try:
+            with closing(connection.cursor()) as cursor:
                 cursor.execute(sql, params)
                 if type == "SELECT":
                     return self.dictfetchall(cursor)
         except Exception as e:
             raise e
-        finally:
-            kill_query_timer.cancel()
+        # finally:
+        #     kill_query_timer.cancel()
 
     def get(self, cids):
         format_strings = ','.join(['%s'] * len(cids))
-        # query_text = 'SELECT client_id, GROUP_CONCAT(interest ORDER BY interest SEPARATOR " " ) AS interests ' \
-        #              'FROM cust_interests ' \
-        #              'GROUP BY client_id HAVING client_id IN (' + ','.join(map(str, cids)) + ')'
         query_text = 'SELECT client_id, GROUP_CONCAT(interest ORDER BY interest SEPARATOR " " ) AS interests ' \
                      'FROM cust_interests ' \
                      'GROUP BY client_id HAVING client_id IN (%s)' % format_strings
@@ -111,7 +123,6 @@ class Store:
             if int(query_res[0]["timeout"]) < time.time():
                 del_query = 'DELETE FROM cache_score WHERE key_score= "%s" '
                 self.query(db_type='cache', params=[key], sql=del_query, type="DELETE")
-                # del self.cache[key]
                 return None
             else:
                 return query_res[0]["score"]

@@ -45,8 +45,6 @@ class TestResponseRequest:
         _, result_code = self.get_response(param_input)
         assert result_code == expected_output
 
-
-
     @pytest.mark.parametrize("invalid_request", [
         # {"account": "horns&hoofs", "login": "h&f", "method": "online_score", "token": "", "arguments": {}},
         {"account": "horns&hoofs", "login": "h&f", "method": "online_score", "token": "sdd", "arguments": {}},
@@ -62,19 +60,15 @@ class TestResponseRequest:
 
 
 class TestOnlineScoreMethod:
-    @pytest.fixture(scope='function',autouse=True)
+    @pytest.fixture(scope='function', autouse=True)
     def setup(self):
         self.context = {}
         self.headers = {}
         self.good_store = store.Store(api.db_config)
         self.bad_store = store.Store(bad_config_db)
-        # self.get_score =
 
     def get_response_good_store(self, request):
         return api.method_handler({"body": request, "headers": self.headers}, self.context, self.good_store)
-
-    def get_response_bad_store(self, request):
-        return api.method_handler({"body": request, "headers": self.headers}, self.context, self.bad_store)
 
     @pytest.mark.parametrize(("query", "expected_output"), [
         ({ "account": "hf", "login": "123", "method": "online_score", "token": "123", "arguments":
@@ -124,10 +118,10 @@ class TestOnlineScoreMethod:
             {"phone": "71234567890", "email": "a@b.ru", "first_name": "Stan", "last_name": "Stupnikov",
              "birthday": "01.01.1991", "gender": 1}}], ids=["user-all_fields_disable_store"])
     def test_check_online_score_restore_connection(self, query):
-
         params_initial = query
         params_initial['token'] = gen_good_auth(params_initial)
-        self.good_store.conn['cache'] = None
+        if self.good_store.conn_cache:
+            self.good_store.conn_cache = None
         result_new = scoring_new.get_score(store=self.good_store,
                                            phone=params_initial['arguments'].get('phone', None),
                                            email=params_initial['arguments'].get('email', None),
@@ -136,8 +130,7 @@ class TestOnlineScoreMethod:
                                            first_name=params_initial['arguments'].get('first_name', None),
                                            last_name=params_initial['arguments'].get('last_name', None))
 
-        # print(self.good_store.conn['cache'])
-        assert self.good_store.conn['cache'] is not None
+        assert self.good_store.conn_cache is not None
 
     @pytest.mark.parametrize("query", [
         {"account": "hf", "login": "123", "method": "online_score", "token": "123", "arguments":
@@ -146,8 +139,7 @@ class TestOnlineScoreMethod:
     def test_online_score__works_when_store_is_unavailable(self, query):
         params_initial = query
         params_initial['token'] = gen_good_auth(params_initial)
-        self.good_store.db_cache = 'fake_db'
-        result_new = scoring_new.get_score(store=self.good_store,
+        result_new = scoring_new.get_score(store=self.bad_store,
                                            phone=params_initial['arguments'].get('phone', None),
                                            email=params_initial['arguments'].get('email', None),
                                            birthday=params_initial['arguments'].get('birthday', None),
@@ -174,7 +166,6 @@ class TestOnlineScoreMethod:
         param_input['token'] = gen_good_auth(param_input)
         error_msg, result_code = self.get_response_good_store(param_input)
         expected_output = api.INVALID_REQUEST
-        print(error_msg)
         assert expected_output == result_code
 
 
@@ -189,8 +180,6 @@ class TestGetInterestMethod:
     def get_response_good_store(self, request):
         return api.method_handler({"body": request, "headers": self.headers}, self.context, self.good_store)
 
-    def get_response_bad_store(self, request):
-        return api.method_handler({"body": request, "headers": self.headers}, self.context, self.bad_store)
 
     @pytest.mark.parametrize(("query", "expected_output"), [
         ({"account": "horns&hoofs", "login": "ff", "method": "clients_interests", "token": "",
@@ -204,18 +193,18 @@ class TestGetInterestMethod:
         ids=["existing_ids_with_date", "existing_ids_without_date", "no_existing_id_with_date"])
     def test_correct_query(self, query, expected_output):
         '''
-        here we could enhance tests by checking every component of score formula. But because it educational example,
-        we don't do it
+        compare calculated output with the real rows in SQL db
         '''
         param_input, expected_output = query, expected_output
         param_input['token'] = gen_good_auth(param_input)
         result, _ = self.get_response_good_store(param_input)
         assert result == expected_output
 
-    def test_try_get_interests_from_bad_store(self):
-        param_input = {"account": "horns&hoofs", "login": "ff", "method": "clients_interests", "token": "",
-         "arguments": {"client_ids": [1, 2], "date": "20.07.2017"}}
-        param_input['token'] = gen_good_auth(param_input)
-        result, code = self.get_response_bad_store(param_input)
-        assert code == 422
+    @pytest.mark.parametrize(("cids"), [([1, 2])], ids=['good_cids_bad_store'])
+    def test_try_get_interests_from_bad_store(self, cids):
+        '''
+        Try to retrieve the data from non-existent store
+        '''
+        with pytest.raises(Exception):
+            scoring_new.get_interests(store=self.bad_store, cid=cids)
 
