@@ -35,6 +35,8 @@ class MockedHttpHandler(api.MainHTTPHandler):
 
     def send_request(self, r, path="method/", req_id=42):
         self.path = path
+        # for the tests purposes we can send valid request as well as something that cannot be transform to json
+        # (this is the case of testing Bad Request response)
         try:
             jrequest = json.dumps(r)
             self.rfile.write(jrequest.encode('utf-8'))
@@ -43,6 +45,9 @@ class MockedHttpHandler(api.MainHTTPHandler):
         self.rfile.seek(0)
         try:
             self.headers["Content-Length"] = len(jrequest)
+        # if we send something that cannot be transformed to json, we cannot calculate the length of this request.
+        # so for the test purposes we put in length field not numeric value to provoque response of bad request
+
         except:
             self.headers["Content-Length"] = 'Bad Request'
         self.headers["HTTP_X_REQUEST_ID"] = req_id
@@ -66,7 +71,7 @@ class TestResponseRequest:
         self.handler.do_POST()
         response = json.loads(self.handler.wfile.getvalue().decode())
         assert isinstance(response, dict)
-        assert list(response.keys()) == ['response', 'code']
+        assert sorted(list(response.keys())) == ['code', 'response']
         assert response['code'] == 200
         assert response['response'] == {'score': score_result}
 
@@ -83,7 +88,7 @@ class TestResponseRequest:
         self.handler.do_POST()
         response = json.loads(self.handler.wfile.getvalue().decode())
         assert isinstance(response, dict)
-        assert list(response.keys()) == ['error', 'code']
+        assert sorted(list(response.keys())) == ['code', 'error']
         assert response['code'] == 404
         assert response['error'] == 'Not Found'
 
@@ -98,7 +103,7 @@ class TestResponseRequest:
         self.handler.do_POST()
         response = json.loads(self.handler.wfile.getvalue().decode())
         assert isinstance(response, dict)
-        assert list(response.keys()) == ['error', 'code']
+        assert sorted(list(response.keys())) == ['code', 'error']
         assert response['code'] == 403
         assert response['error'] == 'Forbidden'
 
@@ -114,7 +119,7 @@ class TestResponseRequest:
         self.handler.do_POST()
         response = json.loads(self.handler.wfile.getvalue().decode())
         assert isinstance(response, dict)
-        assert list(response.keys()) == ['error', 'code']
+        assert sorted(list(response.keys())) == ['code', 'error']
         assert response['code'] == 500
         assert response['error'] == 'Internal Server Error'
 
@@ -126,6 +131,6 @@ class TestResponseRequest:
         self.handler.do_POST()
         response = json.loads(self.handler.wfile.getvalue().decode())
         assert isinstance(response, dict)
-        assert list(response.keys()) == ['error', 'code']
+        assert sorted(list(response.keys())) == ['code', 'error']
         assert response['code'] == 400
         assert response['error'] == 'Bad Request'

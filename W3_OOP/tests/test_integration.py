@@ -121,7 +121,8 @@ class TestOnlineScoreMethod:
         params_initial = query
         params_initial['token'] = gen_good_auth(params_initial)
         if self.good_store.conn_cache:
-            self.good_store.conn_cache = None
+            self.good_store.conn_cache.close()
+        print(self.good_store.conn_cache)
         result_new = scoring_new.get_score(store=self.good_store,
                                            phone=params_initial['arguments'].get('phone', None),
                                            email=params_initial['arguments'].get('email', None),

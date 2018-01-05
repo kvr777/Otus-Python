@@ -62,7 +62,7 @@ def test_date_field_bad_input(input_data):
         test_date_field.validate(input_data)
 
 # BIRTHDAY FIELDS
-@pytest.mark.parametrize("input_data", ["", "22.11.1948", "22.11.1947"],
+@pytest.mark.parametrize("input_data", ["", "22.11.1949", "22.11.1948"],
                          ids=["empty","69 years from current", "70 years from current"])
 def test_bday_field_good_input(input_data):
     test_bday_field = api.BirthDayField()
