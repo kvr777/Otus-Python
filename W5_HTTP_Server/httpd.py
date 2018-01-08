@@ -57,6 +57,7 @@ class SimpleHTTPServer(object):
     def handle_connection(self, reader, writer):
         peername = writer.get_extra_info('peername')
         logging.info('Accepted connection from {}'.format(peername))
+        data = ""
         while not reader.at_eof():
             try:
                 data = yield from asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=.05)
@@ -66,16 +67,16 @@ class SimpleHTTPServer(object):
         headers = email.message_from_file(io.StringIO(headers_alone))
         try:
             path = request_line.split(" ")[1]
-        except:
+        except IndexError:
             path = ''
 
         try:
             method = request_line.split(" ")[0]
-        except:
+        except IndexError:
             method = 'Invalid'
         try:
             connection = headers["Connection"]
-        except:
+        except KeyError:
             connection = 'close'
         parsed_path = parse_path(path)
 
