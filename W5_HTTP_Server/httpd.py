@@ -4,29 +4,28 @@ import concurrent.futures
 import os
 import urllib.request as request
 import urllib.parse as parse
+import email
 import mimetypes
+import io
 from datetime import datetime
 import argparse
 
 
 def parse_path(path):
-    path_unqouted = parse.unquote(path)
-    path_wo_args = path_unqouted.split('?', 1)[0]
+    path_unquoted = parse.unquote(path)
+    path_wo_args = path_unquoted.split('?', 1)[0]
     if path_wo_args.endswith('/'):
-        path_wo_args +='index.html'
+        path_wo_args += 'index.html'
     parsed_path = path_wo_args.split('/')
     return os.path.join(os.path.abspath(DOCUMENT_ROOT), *parsed_path)
 
 
-class EchoServer(object):
+class SimpleHTTPServer(object):
     """Server class"""
 
     def __init__(self, host, port, workers, loop=None):
-        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=int(workers))
         self._loop = loop or asyncio.get_event_loop()
-        self._loop.set_default_executor(self._executor)
-        self._server = asyncio.async(asyncio.start_server(self.handle_connection, host=host, port=port))
-
+        self._server = asyncio.start_server(self.handle_connection, host=host, port=port, backlog=int(workers))
 
     def start(self, and_loop=True):
         self._server = self._loop.run_until_complete(self._server)
@@ -54,36 +53,32 @@ class EchoServer(object):
             writer.write('\r\n'.encode())
         return None
 
-
     @asyncio.coroutine
     def handle_connection(self, reader, writer):
         peername = writer.get_extra_info('peername')
         logging.info('Accepted connection from {}'.format(peername))
-        full_data_list = []
         while not reader.at_eof():
             try:
-                data = yield from asyncio.wait_for(reader.readline(), timeout=.05)
-                full_data_list += data.decode().splitlines()
+                data = yield from asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=.05)
             except concurrent.futures.TimeoutError:
                 break
+        request_line, headers_alone = data.decode('utf-8').split('\r\n', 1)
+        headers = email.message_from_file(io.StringIO(headers_alone))
         try:
-            path = full_data_list[0].split(" ")[1]
-        except: path = ''
+            path = request_line.split(" ")[1]
+        except:
+            path = ''
 
         try:
-            method = full_data_list[0].split(" ")[0]
+            method = request_line.split(" ")[0]
         except:
             method = 'Invalid'
         try:
-            connection = full_data_list[2].split(" ")[1]
+            connection = headers["Connection"]
         except:
             connection = 'close'
         parsed_path = parse_path(path)
 
-        yield from self._loop.run_in_executor(None, self.method_handler,  writer, method, connection, parsed_path)
-        # self.method_handler(writer, method, connection, parsed_path)
-
-    def method_handler(self, writer, method, connection, parsed_path):
         if method in ['GET', 'HEAD']:
             if os.path.isfile(parsed_path):
                 writer.write('HTTP/1.1 200 OK\r\n'.encode('utf-8'))
@@ -114,7 +109,8 @@ if __name__ == '__main__':
     DOCUMENT_ROOT = os.path.abspath(args.r)
 
     logging.basicConfig(level=logging.DEBUG)
-    server = EchoServer('127.0.0.1', 80, workers=args.w)
+    server = SimpleHTTPServer('127.0.0.1', 80, workers=args.w)
+
     try:
         server.start()
     except KeyboardInterrupt:
