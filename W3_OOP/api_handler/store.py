@@ -48,8 +48,7 @@ class Store:
                 attempt += 1
                 conn = None
 
-
-    def query(self, db, conn, sql, type, params=()):
+    def query(self, db, conn, sql, params=()):
         try:
             conn.ping()
         except:
@@ -57,10 +56,7 @@ class Store:
         try:
             with closing(conn.cursor()) as cursor:
                 cursor.execute(sql, params)
-                if type == "SELECT":
-                    return self.dictfetchall(cursor), conn
-                else:
-                    return conn
+                return self.dictfetchall(cursor), conn
         except Exception as e:
             raise e
 
@@ -70,8 +66,7 @@ class Store:
                      'FROM cust_interests ' \
                      'GROUP BY client_id HAVING client_id IN (%s)' % format_strings
 
-        query_result, conn = self.query(sql=query_text, params=cids,
-                                     db=self.db_store,conn = self.conn_store, type="SELECT")
+        query_result, conn = self.query(sql=query_text, params=cids, db=self.db_store, conn=self.conn_store)
         self.conn_store = conn
         return json.dumps(query_result)
 
@@ -87,17 +82,17 @@ class Store:
     def cache_get(self, key):
         query_text = 'SELECT score, timeout FROM cache_score WHERE key_score= "%s" '
         try:
-            query_res, conn = \
-                self.query(db=self.db_cache,conn = self.conn_cache, params=[key], sql=query_text, type="SELECT")
+            query_res, conn = self.query(db=self.db_cache, conn=self.conn_cache, params=[key], sql=query_text)
             self.conn_cache = conn
         except:
+            raise
             query_res = []
             self.conn_cache = None
             logging.warning("cannot access to cache database")
         if len(query_res):
             if int(query_res[0]["timeout"]) < time.time():
                 del_query = 'DELETE FROM cache_score WHERE key_score= "%s" '
-                conn = self.query(db=self.db_cache,conn = self.conn_cache, params=[key], sql=del_query, type="DELETE")
+                _, conn = self.query(db=self.db_cache, conn=self.conn_cache, params=[key], sql=del_query)
                 self.conn_cache = conn
                 return None
             else:
@@ -108,8 +103,8 @@ class Store:
     def cache_set(self, key, score, timeout=60 * 60):
         try:
             query_text = 'INSERT INTO cache_score(key_score, score, timeout) VALUES ("%s", %s, %s);'
-            conn = self.query(db=self.db_cache,conn = self.conn_cache, params=(key, score, time.time()+timeout),
-                              sql=query_text, type="INSERT")
+            _, conn = self.query(db=self.db_cache, conn=self.conn_cache, params=(key, score, time.time()+timeout),
+                                 sql=query_text)
             self.conn_cache = conn
         except:
             logging.warning("Cannot save to cache database")

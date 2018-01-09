@@ -35,21 +35,10 @@ class MockedHttpHandler(api.MainHTTPHandler):
 
     def send_request(self, r, path="method/", req_id=42):
         self.path = path
-        # for the tests purposes we can send valid request as well as something that cannot be transform to json
-        # (this is the case of testing Bad Request response)
-        try:
-            jrequest = json.dumps(r)
-            self.rfile.write(jrequest.encode('utf-8'))
-        except:
-            self.rfile.write("".encode('utf-8'))
+        jrequest = json.dumps(r)
+        self.rfile.write(jrequest.encode('utf-8'))
         self.rfile.seek(0)
-        try:
-            self.headers["Content-Length"] = len(jrequest)
-        # if we send something that cannot be transformed to json, we cannot calculate the length of this request.
-        # so for the test purposes we put in length field not numeric value to provoque response of bad request
-
-        except:
-            self.headers["Content-Length"] = 'Bad Request'
+        self.headers["Content-Length"] = len(jrequest)
         self.headers["HTTP_X_REQUEST_ID"] = req_id
 
 
@@ -124,10 +113,11 @@ class TestResponseRequest:
         assert response['error'] == 'Internal Server Error'
 
     @pytest.mark.parametrize(("request_body"),
-                             [''.encode('utf-8')],
-                             ids=['send_bytes_instead_of_string'])
+                             [""],
+                             ids=['empty_request_and_corrupted_headers_then'])
     def test_http_handler_bad_request(self, request_body):
         self.handler.send_request(request_body)
+        self.handler.headers = {}
         self.handler.do_POST()
         response = json.loads(self.handler.wfile.getvalue().decode())
         assert isinstance(response, dict)
