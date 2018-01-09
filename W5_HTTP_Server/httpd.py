@@ -23,20 +23,18 @@ def parse_path(path):
 class SimpleHTTPServer(object):
     """Server class"""
 
-    def __init__(self, host, port, workers, loop=None):
-        self._loop = loop or asyncio.get_event_loop()
+    def __init__(self, host, port, workers):
+        self._loop = asyncio.get_event_loop()
         self._server = asyncio.start_server(self.handle_connection, host=host, port=port, backlog=int(workers))
 
-    def start(self, and_loop=True):
+    def start(self):
         self._server = self._loop.run_until_complete(self._server)
         logging.info('Listening established on {0}'.format(self._server.sockets[0].getsockname()))
-        if and_loop:
-            self._loop.run_forever()
+        self._loop.run_forever()
 
-    def stop(self, and_loop=True):
+    def stop(self):
         self._server.close()
-        if and_loop:
-            self._loop.close()
+        self._loop.close()
 
     @staticmethod
     def create_headers(writer, parsed_path, connection, long_version=False):
@@ -60,8 +58,8 @@ class SimpleHTTPServer(object):
         data = ""
         while not reader.at_eof():
             try:
-                data = yield from asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=.05)
-            except concurrent.futures.TimeoutError:
+                data = yield from asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=.03)
+            except (concurrent.futures.TimeoutError, asyncio.IncompleteReadError, asyncio.LimitOverrunError):
                 break
         request_line, headers_alone = data.decode('utf-8').split('\r\n', 1)
         headers = email.message_from_file(io.StringIO(headers_alone))
@@ -79,7 +77,9 @@ class SimpleHTTPServer(object):
         except KeyError:
             connection = 'close'
         parsed_path = parse_path(path)
+        self.method_handler(writer, method, connection, parsed_path)
 
+    def method_handler(self, writer, method, connection, parsed_path):
         if method in ['GET', 'HEAD']:
             if os.path.isfile(parsed_path):
                 writer.write('HTTP/1.1 200 OK\r\n'.encode('utf-8'))
