@@ -121,8 +121,8 @@ class TestOnlineScoreMethod:
     def test_check_online_score_restore_connection(self, query):
         params_initial = query
         params_initial['token'] = gen_good_auth(params_initial)
-        if self.good_store.connection.conn_cache:
-            self.good_store.connection.conn_cache.close()
+        if self.good_store.conn_cache.conn:
+            self.good_store.conn_cache.conn.close()
         result_new = scoring_new.get_score(store=self.good_store,
                                            phone=params_initial['arguments'].get('phone', None),
                                            email=params_initial['arguments'].get('email', None),
@@ -131,7 +131,7 @@ class TestOnlineScoreMethod:
                                            first_name=params_initial['arguments'].get('first_name', None),
                                            last_name=params_initial['arguments'].get('last_name', None))
 
-        assert self.good_store.connection.conn_cache is not None
+        assert self.good_store.conn_cache.conn is not None
 
     @pytest.mark.parametrize("query", [
         {"account": "hf", "login": "123", "method": "online_score", "token": "123", "arguments":
