@@ -9,6 +9,7 @@ import mimetypes
 import io
 from datetime import datetime
 import argparse
+import multiprocessing
 
 
 def parse_path(path):
@@ -23,9 +24,9 @@ def parse_path(path):
 class SimpleHTTPServer(object):
     """Server class"""
 
-    def __init__(self, host, port, workers):
+    def __init__(self, host, port):
         self._loop = asyncio.get_event_loop()
-        self._server = asyncio.start_server(self.handle_connection, host=host, port=port, backlog=int(workers))
+        self._server = asyncio.start_server(self.handle_connection, host=host, port=port, reuse_port=True)
 
     def start(self):
         self._server = self._loop.run_until_complete(self._server)
@@ -55,29 +56,32 @@ class SimpleHTTPServer(object):
     def handle_connection(self, reader, writer):
         peername = writer.get_extra_info('peername')
         logging.info('Accepted connection from {}'.format(peername))
-        data = ""
+        data = None
         while not reader.at_eof():
             try:
-                data = yield from asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=.03)
+                data = yield from asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=.05)
             except (concurrent.futures.TimeoutError, asyncio.IncompleteReadError, asyncio.LimitOverrunError):
                 break
-        request_line, headers_alone = data.decode('utf-8').split('\r\n', 1)
-        headers = email.message_from_file(io.StringIO(headers_alone))
-        try:
-            path = request_line.split(" ")[1]
-        except IndexError:
-            path = ''
+        if data:
+            request_line, headers_alone = data.decode('utf-8').split('\r\n', 1)
+            headers = email.message_from_file(io.StringIO(headers_alone))
+            try:
+                path = request_line.split(" ")[1]
+            except IndexError:
+                path = ''
 
-        try:
-            method = request_line.split(" ")[0]
-        except IndexError:
-            method = 'Invalid'
-        try:
-            connection = headers["Connection"]
-        except KeyError:
-            connection = 'close'
-        parsed_path = parse_path(path)
-        self.method_handler(writer, method, connection, parsed_path)
+            try:
+                method = request_line.split(" ")[0]
+            except IndexError:
+                method = 'Invalid'
+            try:
+                connection = headers["Connection"]
+            except KeyError:
+                connection = 'close'
+            parsed_path = parse_path(path)
+            self.method_handler(writer, method, connection, parsed_path)
+        else:
+            self.method_handler(writer, 'Invalid', 'close', '')
 
     def method_handler(self, writer, method, connection, parsed_path):
         if method in ['GET', 'HEAD']:
@@ -110,11 +114,24 @@ if __name__ == '__main__':
     DOCUMENT_ROOT = os.path.abspath(args.r)
 
     logging.basicConfig(level=logging.DEBUG)
-    server = SimpleHTTPServer('127.0.0.1', 80, workers=args.w)
+    server = SimpleHTTPServer('127.0.0.1', 80)
+
+    plist = list()
+    for i in range(int(args.w)):
+        p = multiprocessing.Process(
+            target=server.start()
+        )
+        plist.append(p)
 
     try:
-        server.start()
+        for proc in plist:
+            proc.start()
+            proc.join()
+
     except KeyboardInterrupt:
         pass  # Press Ctrl+C to stop
+
     finally:
-        server.stop()
+        for proc in plist:
+            proc.close()
+            proc.join()
