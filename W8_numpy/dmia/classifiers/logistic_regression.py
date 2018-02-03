@@ -1,12 +1,14 @@
 import numpy as np
 from scipy import sparse
 
+
 class LogisticRegression:
     def __init__(self):
         self.w = None
         self.loss_history = None
 
-    def sigmoid(self, x):
+    @staticmethod
+    def sigmoid(x):
         return 1. / (1. + np.exp(-x))
 
     def train(self, X, y, learning_rate=1e-3, reg=1e-5, num_iters=100,
@@ -64,7 +66,7 @@ class LogisticRegression:
             # TODO:                                                                 #
             # Update the weights using the gradient and the learning rate.          #
             #########################################################################
-            # learning_rate /=it+1
+
             self.w -= learning_rate * gradW
 
             #########################################################################
@@ -97,9 +99,8 @@ class LogisticRegression:
         # Hint: It might be helpful to use np.vstack and np.sum                   #
         ###########################################################################
 
-        result = X*self.w.T
-        y_proba = np.vstack([1 - self.sigmoid(result), self.sigmoid(result)]).T
-
+        positive_prob = LogisticRegression.sigmoid(X*self.w.T)
+        y_proba = np.vstack([1 - positive_prob, positive_prob]).T
 
         ###########################################################################
         #                           END OF YOUR CODE                              #
@@ -126,7 +127,6 @@ class LogisticRegression:
         y_proba = self.predict_proba(X, append_bias=True)
         y_pred = y_proba.argmax(axis=1)
 
-
         ###########################################################################
         #                           END OF YOUR CODE                              #
         ###########################################################################
@@ -146,7 +146,7 @@ class LogisticRegression:
         loss = 0
         # Compute loss and gradient. Your code should not contain python loops.
 
-        pred = self.sigmoid(X_batch*self.w.T)
+        pred = LogisticRegression.sigmoid(X_batch*self.w.T)
         dw = (pred - y_batch)*X_batch
         loss = np.sum(-(np.dot(y_batch, np.log(pred)) + np.dot(1-y_batch, np.log(1-pred))))
 
@@ -161,9 +161,8 @@ class LogisticRegression:
         loss += np.sum((reg/2.*y_batch.shape[0])*self.w[:-1]**2)
         dw[:-1] = dw[:-1]+(reg * self.w[:-1]) / y_batch.shape[0]
 
-        return np.round(loss, 4), dw
+        return loss, dw
 
     @staticmethod
     def append_biases(X):
         return sparse.hstack((X, np.ones(X.shape[0])[:, np.newaxis])).tocsr()
-
