@@ -35,7 +35,7 @@ def dot_rename(path):
     head, fn = os.path.split(path)
     # atomic in most cases
     # t = str(int(time.time()))+'.'
-    os.rename(path, os.path.join(head, '.'))
+    os.rename(path, os.path.join(head, "." + fn))
 
 
 def insert_appsinstalled(memc_addr, appsinstalled, dry_run=False):
