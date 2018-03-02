@@ -7,6 +7,7 @@ import glob
 import logging
 import collections
 from optparse import OptionParser
+from functools import partial
 # brew install protobuf
 # protoc  --python_out=. ./appsinstalled.proto
 # pip install protobuf
@@ -14,17 +15,27 @@ import appsinstalled_pb2
 # pip install python-memcached
 import memcache
 import threading
+import multiprocessing as mp
 import queue
+
+logging.basicConfig(filename=None, level=logging.INFO,
+                    format='[%(asctime)s] %(levelname).1s %(message)s', datefmt='%Y.%m.%d %H:%M:%S')
 
 
 NORMAL_ERR_RATE = 0.01
+CONNECTION_TIMEOUT = 1
+CONNECTION_RETRIES = 5
+
 AppsInstalled = collections.namedtuple("AppsInstalled", ["dev_type", "dev_id", "lat", "lon", "apps"])
+
+lock = threading.Lock()
 
 
 def dot_rename(path):
     head, fn = os.path.split(path)
     # atomic in most cases
-    os.rename(path, os.path.join(head, "." + fn))
+    # t = str(int(time.time()))+'.'
+    os.rename(path, os.path.join(head, '.'))
 
 
 def insert_appsinstalled(memc_addr, appsinstalled, dry_run=False):
@@ -36,15 +47,28 @@ def insert_appsinstalled(memc_addr, appsinstalled, dry_run=False):
     packed = ua.SerializeToString()
     # @TODO persistent connection
     # @TODO retry and timeouts!
-    try:
-        if dry_run:
-            logging.debug("%s - %s -> %s" % (memc_addr, key, str(ua).replace("\n", " ")))
+
+    if dry_run:
+        logging.debug("%s - %s -> %s" % (memc_addr, key, str(ua).replace("\n", " ")))
+    else:
+        counter = 0
+        memc = None
+        while (counter <= CONNECTION_RETRIES) & (not memc):
+            try:
+                memc = memcache.Client([memc_addr], socket_timeout=CONNECTION_TIMEOUT)
+            except Exception as e:
+                print("Connection Failed **BECAUSE:** {}".format(e))
+                print("Attempt {} of 100".format(counter))
+                counter += 1
+                print(counter)
+        if not memc:
+            return False
         else:
-            memc = memcache.Client([memc_addr])
-            memc.set(key, packed)
-    except Exception as e:
-        logging.exception("Cannot write to memc %s: %s" % (memc_addr, e))
-        return False
+            try:
+                memc.set(key, packed)
+            except Exception as e:
+                logging.exception("Cannot write to memc %s: %s" % (memc_addr, e))
+                return False
     return True
 
 
@@ -67,6 +91,17 @@ def parse_appsinstalled(line):
     return AppsInstalled(dev_type, dev_id, lat, lon, apps)
 
 
+def do_work(memc_addr, input_q, result_q, dry_run):
+    while True:
+        item = input_q.get()
+        ok = insert_appsinstalled(memc_addr, item, dry_run)
+        result_q.put(ok)
+        input_q.task_done()
+        q_size = result_q.qsize()
+        if q_size % 2 == 0:
+            logging.info('Processed {} rows in address {}'.format(q_size, memc_addr))
+
+
 def process_file(options, fn):
     device_memc = {
         "idfa": options.idfa,
@@ -74,10 +109,25 @@ def process_file(options, fn):
         "adid": options.adid,
         "dvid": options.dvid,
     }
+
     processed = errors = 0
+    workers_queue_dict = {}
+
+    for key in device_memc.keys():
+        # create queue for writing rows in memcache and queue to store the results of writing
+        workers_queue_dict[key] = (queue.Queue(), queue.Queue())
+
+        # launch thread for every thread
+        t = threading.Thread(target=do_work,
+                             args=(device_memc.get(key),
+                                   workers_queue_dict.get(key)[0], workers_queue_dict.get(key)[1], options.dry))
+        t.daemon = True
+        t.start()
+
     head, fname = os.path.split(fn)
     logging.info('Processing %s' % fname)
     fd = gzip.open(fn, 'rt')
+    a = 0
     for line in fd:
         line = line.strip()
         if not line:
@@ -89,15 +139,25 @@ def process_file(options, fn):
         memc_addr = device_memc.get(appsinstalled.dev_type)
         if not memc_addr:
             errors += 1
-            logging.error("Unknow device type: %s" % appsinstalled.dev_type)
+            logging.error("Unknown device type: %s" % appsinstalled.dev_type)
             continue
-        ok = insert_appsinstalled(memc_addr, appsinstalled, options.dry)
-        if ok:
-            processed += 1
-        else:
-            errors += 1
+
+        workers_queue_dict.get(appsinstalled.dev_type)[0].put(appsinstalled)
+        a += 1
+        if a % 2 == 0:
+            logging.info('Processed {} rows'.format(a))
+
+    for key in workers_queue_dict.keys():
+        workers_queue_dict.get(key)[0].join()
+        res_list = list(workers_queue_dict.get(key)[1].queue)
+        processed += res_list.count(True)
+        errors += res_list.count(False)
+
+    print(processed, errors)
+
     if not processed:
         fd.close()
+        return fn
 
     err_rate = float(errors) / processed
     if err_rate < NORMAL_ERR_RATE:
@@ -105,32 +165,28 @@ def process_file(options, fn):
     else:
         logging.error("High error rate (%s > %s). Failed load" % (err_rate, NORMAL_ERR_RATE))
     fd.close()
+    return fn
 
 
-def process_queue(options, cache_queue):
-    while True:
-        fn = cache_queue.get()
-        process_file(options, fn)
-        cache_queue.task_done()
+def main_multiprocessing(options):
 
-def main_multithread(options):
+    files_to_process = glob.iglob(options.pattern)
 
-    files_to_process = glob.iglob(opts.pattern)
-
-    cache_queue = queue.Queue()
-
-    for i in range(int(options.w)):
-        t = threading.Thread(target=process_queue, args=(options, cache_queue,))
-        t.daemon = True
-        t.start()
+    with mp.Pool(4) as p:
+        for x in p.imap(partial(process_file, options), files_to_process):
+            dot_rename(x)
 
 
-    for fn in files_to_process:
-        cache_queue.put(fn)
+def main(options):
 
-    cache_queue.join()
+    logging.info("Memc loader started with options: %s" % options)
 
+    try:
+        main_multiprocessing(options)
 
+    except Exception as e:
+        logging.exception("Unexpected error: %s" % e)
+        sys.exit(1)
 
 
 def prototest():
@@ -159,23 +215,18 @@ if __name__ == '__main__':
     op.add_option("--gaid", action="store", default="127.0.0.1:33014")
     op.add_option("--adid", action="store", default="127.0.0.1:33015")
     op.add_option("--dvid", action="store", default="127.0.0.1:33016")
-    op.add_option('-w', help='Number of workers', default=1)
+    op.add_option('-w', help='Number of workers', default=None)
     (opts, args) = op.parse_args()
-    logging.basicConfig(filename=opts.log, level=logging.INFO if not opts.dry else logging.DEBUG,
-                        format='[%(asctime)s] %(levelname).1s %(message)s', datefmt='%Y.%m.%d %H:%M:%S')
+    if not opts.w:
+        # assume we have two virtual cores per one physical. Spread process across virtual cores is inefficient, so we
+        # use only physical cores
+        opts.w = max(1, int(mp.cpu_count() / 2))
+
+    logger = logging.getLogger(__name__)
+    logger.setLevel(level=logging.INFO if not opts.dry else logging.DEBUG)
+
     if opts.test:
         prototest()
         sys.exit(0)
 
-    logging.info("Memc loader started with options: %s" % opts)
-
-    files_to_process_init = glob.iglob(opts.pattern)
-
-    try:
-        main_multithread(opts)
-        for fp in files_to_process_init:
-            dot_rename(fp)
-
-    except Exception as e:
-        logging.exception("Unexpected error: %s" % e)
-        sys.exit(1)
+    main(opts)
