@@ -57,10 +57,9 @@ def insert_appsinstalled(memc_addr, appsinstalled, dry_run=False):
             try:
                 memc = memcache.Client([memc_addr], socket_timeout=CONNECTION_TIMEOUT)
             except Exception as e:
-                print("Connection Failed **BECAUSE:** {}".format(e))
-                print("Attempt {} of 100".format(counter))
+                logging.warning("Connection Failed **BECAUSE:** {}".format(e))
+                logging.info("Attempt {} of 100".format(counter))
                 counter += 1
-                print(counter)
         if not memc:
             return False
         else:
@@ -152,8 +151,6 @@ def process_file(options, fn):
         res_list = list(workers_queue_dict.get(key)[1].queue)
         processed += res_list.count(True)
         errors += res_list.count(False)
-
-    print(processed, errors)
 
     if not processed:
         fd.close()
