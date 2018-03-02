@@ -98,7 +98,7 @@ def do_work(memc_addr, input_q, result_q, dry_run):
         result_q.put(ok)
         input_q.task_done()
         q_size = result_q.qsize()
-        if q_size % 2 == 0:
+        if q_size % 10000 == 0:
             logging.info('Processed {} rows in address {}'.format(q_size, memc_addr))
 
 
@@ -144,7 +144,7 @@ def process_file(options, fn):
 
         workers_queue_dict.get(appsinstalled.dev_type)[0].put(appsinstalled)
         a += 1
-        if a % 2 == 0:
+        if a % 500000 == 0:
             logging.info('Processed {} rows'.format(a))
 
     for key in workers_queue_dict.keys():
@@ -172,7 +172,7 @@ def main_multiprocessing(options):
 
     files_to_process = glob.iglob(options.pattern)
 
-    with mp.Pool(4) as p:
+    with mp.Pool(int(options.w)) as p:
         for x in p.imap(partial(process_file, options), files_to_process):
             dot_rename(x)
 
