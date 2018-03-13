@@ -17,7 +17,6 @@ import memcache
 import threading
 import multiprocessing as mp
 import queue
-import time
 
 logging.basicConfig(filename=None, level=logging.INFO,
                     format='[%(asctime)s] %(levelname).1s %(message)s', datefmt='%Y.%m.%d %H:%M:%S')
@@ -55,7 +54,7 @@ def get_packed (appsinstalled):
     return ua.SerializeToString()
 
 
-def insert_appsinstalled(memc_addr, appsinstalled, dry_run=False):
+def insert_appsinstalled(memc, memc_addr, appsinstalled, dry_run=False):
     ua = appsinstalled_pb2.UserApps()
     ua.lat = appsinstalled.lat
     ua.lon = appsinstalled.lon
@@ -67,11 +66,9 @@ def insert_appsinstalled(memc_addr, appsinstalled, dry_run=False):
         logging.debug("%s - %s -> %s" % (memc_addr, key, str(ua).replace("\n", " ")))
     else:
         counter = set_counter = 0
-        memc = memc_conn_dict.get(memc_addr, None)
-        while (counter <= CONNECTION_RETRIES) & (not memc):
+        while (counter <= CONNECTION_RETRIES) and (memc is None):
             try:
                 memc = memcache.Client([memc_addr], socket_timeout=CONNECTION_TIMEOUT)
-                memc_conn_dict[memc_addr] = memc
             except Exception as e:
                 logging.warning("Connection Failed **BECAUSE:** {}".format(e))
                 logging.info("Attempt {} of 100".format(counter))
@@ -113,6 +110,7 @@ def parse_appsinstalled(line):
 
 def do_work(memc_addr, input_q, result_q, dry_run):
     w_process = w_error = 0
+    memc = memcache.Client([memc_addr], socket_timeout=CONNECTION_TIMEOUT)
     while True:
         items = input_q.get()
         if items == 'end':
@@ -121,7 +119,7 @@ def do_work(memc_addr, input_q, result_q, dry_run):
             input_q.task_done()
             return
         for item in items:
-            ok = insert_appsinstalled(memc_addr, item, dry_run)
+            ok = insert_appsinstalled(memc, memc_addr, item, dry_run)
             if ok:
                 w_process += 1
             else:
@@ -129,26 +127,6 @@ def do_work(memc_addr, input_q, result_q, dry_run):
             if (w_process + w_error) % WRITE_LOG_SIZE == 0:
                 logging.info('Processed {} rows in address {}'.format((w_process + w_error), memc_addr))
         input_q.task_done()
-
-
-# def do_work(memc_addr, input_q, result_q, dry_run):
-#     w_process = w_error = 0
-#     while True:
-#         try:
-#             items = input_q.get(timeout=1)
-#         except queue.Empty:
-#             result_q.put([w_process, w_error])
-#             logging.info('Finally processed {} rows in address {}'.format((w_process + w_error), memc_addr))
-#             return
-#         for item in items:
-#             ok = insert_appsinstalled(memc_addr, item, dry_run)
-#             if ok:
-#                 w_process += 1
-#             else:
-#                 w_error += 1
-#             if (w_process + w_error) % WRITE_LOG_SIZE == 0:
-#                 logging.info('Processed {} rows in address {}'.format((w_process + w_error), memc_addr))
-#         input_q.task_done()
 
 
 def process_lines_in_files(fname, fd, device_memc, lines_batch_dict, workers_queue_dict):
@@ -218,7 +196,6 @@ def process_file(options, fn):
             workers_queue_dict.get(key).queue_in.put(appsinstalled_list)
             lines_batch_dict[key] = []
         workers_queue_dict.get(key).queue_in.put('end')
-
 
     for key in workers_queue_dict.keys():
         workers_queue_dict.get(key).queue_in.join()
