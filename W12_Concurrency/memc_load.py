@@ -107,9 +107,8 @@ def parse_appsinstalled(line):
 def do_work(memc_addr, input_q, result_q, dry_run):
     w_process = w_error = 0
     while True:
-        try:
-            items = input_q.get(timeout=1)
-        except queue.Empty:
+        items = input_q.get()
+        if items == 'end':
             result_q.put([w_process, w_error])
             logging.info('Finally processed {} rows in address {}'.format((w_process + w_error), memc_addr))
             return
@@ -189,6 +188,7 @@ def process_file(options, fn):
         appsinstalled_list = lines_batch_dict.get(key)
         if len(appsinstalled_list):
             workers_queue_dict.get(key).queue_in.put(appsinstalled_list)
+            workers_queue_dict.get(key).queue_in.put('end')
             lines_batch_dict[key] = []
 
     for key in workers_queue_dict.keys():
