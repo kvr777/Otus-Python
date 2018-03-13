@@ -26,6 +26,7 @@ logging.basicConfig(filename=None, level=logging.INFO,
 NORMAL_ERR_RATE = 0.01
 CONNECTION_TIMEOUT = 1
 CONNECTION_RETRIES = 5
+INSERTION_RETRIES = 5
 WORKER_BATCH_SIZE = 100
 READ_LOG_SIZE = 200000
 WRITE_LOG_SIZE = 10000
@@ -33,7 +34,9 @@ WRITE_LOG_SIZE = 10000
 AppsInstalled = collections.namedtuple("AppsInstalled", ["dev_type", "dev_id", "lat", "lon", "apps"])
 
 lock = threading.Lock()
+memc = None
 memc_conn_dict = {}
+
 
 def dot_rename(path):
     head, fn = os.path.split(path)
@@ -63,7 +66,7 @@ def insert_appsinstalled(memc_addr, appsinstalled, dry_run=False):
     if dry_run:
         logging.debug("%s - %s -> %s" % (memc_addr, key, str(ua).replace("\n", " ")))
     else:
-        counter = 0
+        counter = set_counter = 0
         memc = memc_conn_dict.get(memc_addr, None)
         while (counter <= CONNECTION_RETRIES) & (not memc):
             try:
@@ -75,13 +78,17 @@ def insert_appsinstalled(memc_addr, appsinstalled, dry_run=False):
                 counter += 1
         if not memc:
             return False
-        else:
+
+        while set_counter <= INSERTION_RETRIES:
             try:
-                if not memc.set(key, packed):
-                    return False
+                if memc.set(key, packed) is not None:
+                    return True
+                set_counter += 1
             except Exception as e:
                 logging.exception("Cannot write to memc %s: %s" % (memc_addr, e))
                 return False
+        if set_counter > INSERTION_RETRIES:
+            return False
     return True
 
 
@@ -111,6 +118,7 @@ def do_work(memc_addr, input_q, result_q, dry_run):
         if items == 'end':
             result_q.put([w_process, w_error])
             logging.info('Finally processed {} rows in address {}'.format((w_process + w_error), memc_addr))
+            input_q.task_done()
             return
         for item in items:
             ok = insert_appsinstalled(memc_addr, item, dry_run)
@@ -121,6 +129,26 @@ def do_work(memc_addr, input_q, result_q, dry_run):
             if (w_process + w_error) % WRITE_LOG_SIZE == 0:
                 logging.info('Processed {} rows in address {}'.format((w_process + w_error), memc_addr))
         input_q.task_done()
+
+
+# def do_work(memc_addr, input_q, result_q, dry_run):
+#     w_process = w_error = 0
+#     while True:
+#         try:
+#             items = input_q.get(timeout=1)
+#         except queue.Empty:
+#             result_q.put([w_process, w_error])
+#             logging.info('Finally processed {} rows in address {}'.format((w_process + w_error), memc_addr))
+#             return
+#         for item in items:
+#             ok = insert_appsinstalled(memc_addr, item, dry_run)
+#             if ok:
+#                 w_process += 1
+#             else:
+#                 w_error += 1
+#             if (w_process + w_error) % WRITE_LOG_SIZE == 0:
+#                 logging.info('Processed {} rows in address {}'.format((w_process + w_error), memc_addr))
+#         input_q.task_done()
 
 
 def process_lines_in_files(fname, fd, device_memc, lines_batch_dict, workers_queue_dict):
@@ -188,8 +216,9 @@ def process_file(options, fn):
         appsinstalled_list = lines_batch_dict.get(key)
         if len(appsinstalled_list):
             workers_queue_dict.get(key).queue_in.put(appsinstalled_list)
-            workers_queue_dict.get(key).queue_in.put('end')
             lines_batch_dict[key] = []
+        workers_queue_dict.get(key).queue_in.put('end')
+
 
     for key in workers_queue_dict.keys():
         workers_queue_dict.get(key).queue_in.join()
