@@ -40,7 +40,7 @@ def dot_rename(path):
     # atomic in most cases
     # t = str(int(time.time()))+'.'
     # os.rename(path, os.path.join(head, t+fn))
-    # os.rename(path, os.path.join(head, "." + fn))
+    os.rename(path, os.path.join(head, "." + fn))
 
 
 def get_packed (appsinstalled):
@@ -77,8 +77,8 @@ def insert_appsinstalled(memc_addr, appsinstalled, dry_run=False):
             return False
         else:
             try:
-                memc.set(key, packed)
-                memc.get(key)
+                if not memc.set(key, packed):
+                    return False
             except Exception as e:
                 logging.exception("Cannot write to memc %s: %s" % (memc_addr, e))
                 return False
@@ -123,35 +123,10 @@ def do_work(memc_addr, input_q, result_q, dry_run):
                 logging.info('Processed {} rows in address {}'.format((w_process + w_error), memc_addr))
         input_q.task_done()
 
-def process_file(options, fn):
-    device_memc = {
-        "idfa": options.idfa,
-        "gaid": options.gaid,
-        "adid": options.adid,
-        "dvid": options.dvid,
-    }
 
-    processed = errors = 0
-    workers_queue_dict = {}
-    line_batch_dict = {}
-
-    for key in device_memc.keys():
-        # create queue for writing rows in memcache and queue to store the results of writing
-        workers_queue_dict[key] = (queue.Queue(), queue.Queue())
-        line_batch_dict[key] = list()
-
-        # launch thread for every thread
-        t = threading.Thread(target=do_work,
-                             args=(device_memc.get(key),
-                                   workers_queue_dict.get(key)[0], workers_queue_dict.get(key)[1], options.dry))
-        t.daemon = True
-        t.start()
-
-    head, fname = os.path.split(fn)
-    logging.info('Processing %s' % fname)
-    fd = gzip.open(fn, 'rt')
+def process_lines_in_files(fname, fd, device_memc, lines_batch_dict, workers_queue_dict):
+    errors = 0
     a = 0
-
     for line in fd:
         line = line.strip()
         if not line:
@@ -166,27 +141,59 @@ def process_file(options, fn):
             logging.error("Unknown device type: %s" % appsinstalled.dev_type)
             continue
 
-        line_batch_dict.get(appsinstalled.dev_type).append(appsinstalled)
+        lines_batch_dict.get(appsinstalled.dev_type).append(appsinstalled)
 
-        if len(line_batch_dict.get(appsinstalled.dev_type)) >= WORKER_BATCH_SIZE:
-            appsinstalled_list = line_batch_dict.get(appsinstalled.dev_type)
-            workers_queue_dict.get(appsinstalled.dev_type)[0].put(appsinstalled_list)
-            line_batch_dict[appsinstalled.dev_type] = []
+        if len(lines_batch_dict.get(appsinstalled.dev_type)) >= WORKER_BATCH_SIZE:
+            appsinstalled_list = lines_batch_dict.get(appsinstalled.dev_type)
+            workers_queue_dict.get(appsinstalled.dev_type).queue_in.put(appsinstalled_list)
+            lines_batch_dict[appsinstalled.dev_type] = []
 
         a += 1
         if a % READ_LOG_SIZE == 0:
             logging.info('Read {} rows in file {}'.format(a, fname))
-            # workers_queue_dict.get(appsinstalled.dev_type)[0].put(appsinstalled)
 
-    for key in line_batch_dict.keys():
-        appsinstalled_list = line_batch_dict.get(key)
+    return lines_batch_dict, errors
+
+
+def process_file(options, fn):
+    device_memc = {
+        "idfa": options.idfa,
+        "gaid": options.gaid,
+        "adid": options.adid,
+        "dvid": options.dvid,
+    }
+
+    processed = 0
+    workers_queue_dict = {}
+    WorkersQueueObj = collections.namedtuple('WorkersQueueObj', 'name queue_in queue_out')
+    lines_batch_dict = {}
+
+    for key in device_memc.keys():
+        # create queue for writing rows in memcache and queue to store the results of writing
+        wo = WorkersQueueObj(name=key, queue_in=queue.Queue(), queue_out=queue.Queue())
+        workers_queue_dict[key] = wo
+        lines_batch_dict[key] = list()
+
+        # launch thread for every thread
+        t = threading.Thread(target=do_work, args=(device_memc.get(key), wo.queue_in, wo.queue_out, options.dry))
+        t.daemon = True
+        t.start()
+
+    head, fname = os.path.split(fn)
+    logging.info('Processing %s' % fname)
+    fd = gzip.open(fn, 'rt')
+
+    lines_batch_dict, errors = process_lines_in_files(fname, fd, device_memc, lines_batch_dict, workers_queue_dict)
+
+    for key in lines_batch_dict.keys():
+        appsinstalled_list = lines_batch_dict.get(key)
         if len(appsinstalled_list):
-            workers_queue_dict.get(key)[0].put(appsinstalled_list)
-            line_batch_dict[key] = []
+            workers_queue_dict.get(key).queue_in.put(appsinstalled_list)
+            lines_batch_dict[key] = []
 
     for key in workers_queue_dict.keys():
-        workers_queue_dict.get(key)[0].join()
-        w_line_process = workers_queue_dict.get(key)[1].get()
+        workers_queue_dict.get(key).queue_in.join()
+        w_line_process = workers_queue_dict.get(key).queue_out.get()
         processed += w_line_process[0]
         errors += w_line_process[1]
 
