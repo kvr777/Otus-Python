@@ -33,8 +33,6 @@ WRITE_LOG_SIZE = 10000
 AppsInstalled = collections.namedtuple("AppsInstalled", ["dev_type", "dev_id", "lat", "lon", "apps"])
 
 lock = threading.Lock()
-memc = None
-memc_conn_dict = {}
 
 
 def dot_rename(path):
