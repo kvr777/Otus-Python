@@ -24,7 +24,6 @@ logging.basicConfig(filename=None, level=logging.INFO,
 
 NORMAL_ERR_RATE = 0.01
 CONNECTION_TIMEOUT = 1
-CONNECTION_RETRIES = 5
 INSERTION_RETRIES = 5
 WORKER_BATCH_SIZE = 100
 READ_LOG_SIZE = 200000
@@ -40,7 +39,7 @@ def dot_rename(path):
     # atomic in most cases
     # t = str(int(time.time()))+'.'
     # os.rename(path, os.path.join(head, t+fn))
-    os.rename(path, os.path.join(head, "." + fn))
+    # os.rename(path, os.path.join(head, "." + fn))
 
 
 def get_packed (appsinstalled):
@@ -52,39 +51,33 @@ def get_packed (appsinstalled):
     return ua.SerializeToString()
 
 
-def insert_appsinstalled(memc, memc_addr, appsinstalled, dry_run=False):
+def insert_appsinstalled(memc, appsinstalled, dry_run=False):
     ua = appsinstalled_pb2.UserApps()
     ua.lat = appsinstalled.lat
     ua.lon = appsinstalled.lon
     key = "%s:%s" % (appsinstalled.dev_type, appsinstalled.dev_id)
     ua.apps.extend(appsinstalled.apps)
     packed = ua.SerializeToString()
+    memc_addr = memc.servers[0].address
 
     if dry_run:
         logging.debug("%s - %s -> %s" % (memc_addr, key, str(ua).replace("\n", " ")))
     else:
-        counter = set_counter = 0
-        while (counter <= CONNECTION_RETRIES) and (memc is None):
-            try:
-                memc = memcache.Client([memc_addr], socket_timeout=CONNECTION_TIMEOUT)
-            except Exception as e:
-                logging.warning("Connection Failed **BECAUSE:** {}".format(e))
-                logging.info("Attempt {} of 100".format(counter))
-                counter += 1
-        if not memc:
-            return False
+        set_counter = 0
 
         while set_counter <= INSERTION_RETRIES:
             try:
                 if memc.set(key, packed) is not None:
                     return True
                 set_counter += 1
+                logging.info("Attempt {} of {}".format(set_counter, INSERTION_RETRIES))
             except Exception as e:
                 logging.exception("Cannot write to memc %s: %s" % (memc_addr, e))
                 return False
         if set_counter > INSERTION_RETRIES:
             return False
-    return True
+        else:
+            return True
 
 
 def parse_appsinstalled(line):
@@ -108,7 +101,7 @@ def parse_appsinstalled(line):
 
 def do_work(memc_addr, input_q, result_q, dry_run):
     w_process = w_error = 0
-    memc = memcache.Client([memc_addr], socket_timeout=CONNECTION_TIMEOUT)
+    memc = memcache.Client([memc_addr], socket_timeout=CONNECTION_TIMEOUT, dead_retry=CONNECTION_TIMEOUT)
     while True:
         items = input_q.get()
         if items == 'end':
@@ -117,7 +110,7 @@ def do_work(memc_addr, input_q, result_q, dry_run):
             input_q.task_done()
             return
         for item in items:
-            ok = insert_appsinstalled(memc, memc_addr, item, dry_run)
+            ok = insert_appsinstalled(memc, item, dry_run)
             if ok:
                 w_process += 1
             else:
