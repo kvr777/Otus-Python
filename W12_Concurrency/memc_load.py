@@ -48,36 +48,35 @@ def get_packed (appsinstalled):
     ua.lon = appsinstalled.lon
     key = "%s:%s" % (appsinstalled.dev_type, appsinstalled.dev_id)
     ua.apps.extend(appsinstalled.apps)
-    return ua.SerializeToString()
-
-
-def insert_appsinstalled(memc, appsinstalled, dry_run=False):
-    ua = appsinstalled_pb2.UserApps()
-    ua.lat = appsinstalled.lat
-    ua.lon = appsinstalled.lon
-    key = "%s:%s" % (appsinstalled.dev_type, appsinstalled.dev_id)
-    ua.apps.extend(appsinstalled.apps)
     packed = ua.SerializeToString()
+    return {key: packed}
+
+
+def insert_appsinstalled(memc, packed_dict, dry_run=False):
+    # key = packed_with_key[1]
+    # packed = packed_with_key[0]
     memc_addr = memc.servers[0].address
 
     if dry_run:
-        logging.debug("%s - %s -> %s" % (memc_addr, key, str(ua).replace("\n", " ")))
+        for key in packed_dict.keys():
+            logging.debug("%s - %s -> %s" % (memc_addr, key, str(packed_dict[key]).replace("\n", " ")))
     else:
-        set_counter = 0
-
-        while set_counter <= INSERTION_RETRIES:
+        set_counter = 1
+        notset_keys = list(packed_dict.keys())
+        total_rows = len(notset_keys)
+        while (set_counter <= INSERTION_RETRIES) and (len(notset_keys) > 0):
             try:
-                if memc.set(key, packed) is not None:
-                    return True
-                set_counter += 1
-                logging.info("Attempt {} of {}".format(set_counter, INSERTION_RETRIES))
+                filtered_packed_dict = {key: packed_dict[key] for key in notset_keys}
+                notset_keys = memc.set_multi(filtered_packed_dict)
+
+                if len(notset_keys) > 0:
+                    logging.info("Attempt {} of {}".format(set_counter, INSERTION_RETRIES))
+                    set_counter += 1
+
             except Exception as e:
                 logging.exception("Cannot write to memc %s: %s" % (memc_addr, e))
-                return False
-        if set_counter > INSERTION_RETRIES:
-            return False
-        else:
-            return True
+                return [total_rows, len(notset_keys)]
+        return [total_rows, len(notset_keys)]
 
 
 def parse_appsinstalled(line):
@@ -101,22 +100,22 @@ def parse_appsinstalled(line):
 
 def do_work(memc_addr, input_q, result_q, dry_run):
     w_process = w_error = 0
-    memc = memcache.Client([memc_addr], socket_timeout=CONNECTION_TIMEOUT, dead_retry=CONNECTION_TIMEOUT)
+    insertion_counter = 1
+    addr, port = memc_addr.split()
+    memc = memcache.Client([(str(addr), int(port))], socket_timeout=CONNECTION_TIMEOUT, dead_retry=CONNECTION_TIMEOUT)
     while True:
-        items = input_q.get()
-        if items == 'end':
+        packed_dict = input_q.get()
+        if packed_dict == 'end':
             result_q.put([w_process, w_error])
             logging.info('Finally processed {} rows in address {}'.format((w_process + w_error), memc_addr))
             input_q.task_done()
             return
-        for item in items:
-            ok = insert_appsinstalled(memc, item, dry_run)
-            if ok:
-                w_process += 1
-            else:
-                w_error += 1
-            if (w_process + w_error) % WRITE_LOG_SIZE == 0:
-                logging.info('Processed {} rows in address {}'.format((w_process + w_error), memc_addr))
+        packed_dict_res = insert_appsinstalled(memc, packed_dict, dry_run)
+        w_process += packed_dict_res[0]
+        w_error += packed_dict_res[1]
+        if (w_process + w_error) >= insertion_counter*WRITE_LOG_SIZE:
+            logging.info('Processed {} rows in address {}'.format((w_process + w_error), memc_addr))
+            insertion_counter += 1
         input_q.task_done()
 
 
@@ -128,6 +127,8 @@ def process_lines_in_files(fname, fd, device_memc, lines_batch_dict, workers_que
         if not line:
             continue
         appsinstalled = parse_appsinstalled(line)
+        packed_with_key = get_packed(appsinstalled)
+
         if not appsinstalled:
             errors += 1
             continue
@@ -137,12 +138,12 @@ def process_lines_in_files(fname, fd, device_memc, lines_batch_dict, workers_que
             logging.error("Unknown device type: %s" % appsinstalled.dev_type)
             continue
 
-        lines_batch_dict.get(appsinstalled.dev_type).append(appsinstalled)
+        lines_batch_dict.get(appsinstalled.dev_type).update(packed_with_key)
 
         if len(lines_batch_dict.get(appsinstalled.dev_type)) >= WORKER_BATCH_SIZE:
-            appsinstalled_list = lines_batch_dict.get(appsinstalled.dev_type)
-            workers_queue_dict.get(appsinstalled.dev_type).queue_in.put(appsinstalled_list)
-            lines_batch_dict[appsinstalled.dev_type] = []
+            appsinstalled_dict = lines_batch_dict.get(appsinstalled.dev_type)
+            workers_queue_dict.get(appsinstalled.dev_type).queue_in.put(appsinstalled_dict)
+            lines_batch_dict[appsinstalled.dev_type] = {}
 
         a += 1
         if a % READ_LOG_SIZE == 0:
@@ -168,7 +169,7 @@ def process_file(options, fn):
         # create queue for writing rows in memcache and queue to store the results of writing
         wo = WorkersQueueObj(name=key, queue_in=queue.Queue(), queue_out=queue.Queue())
         workers_queue_dict[key] = wo
-        lines_batch_dict[key] = list()
+        lines_batch_dict[key] = dict()
 
         # launch thread for every thread
         t = threading.Thread(target=do_work, args=(device_memc.get(key), wo.queue_in, wo.queue_out, options.dry))
@@ -182,15 +183,15 @@ def process_file(options, fn):
     lines_batch_dict, errors = process_lines_in_files(fname, fd, device_memc, lines_batch_dict, workers_queue_dict)
 
     for key in lines_batch_dict.keys():
-        appsinstalled_list = lines_batch_dict.get(key)
-        if len(appsinstalled_list):
-            workers_queue_dict.get(key).queue_in.put(appsinstalled_list)
-            lines_batch_dict[key] = []
+        appsinstalled_dict = lines_batch_dict.get(key)
+        if len(appsinstalled_dict.keys()):
+            workers_queue_dict.get(key).queue_in.put(appsinstalled_dict)
+            lines_batch_dict[key] = {}
         workers_queue_dict.get(key).queue_in.put('end')
 
-    for key in workers_queue_dict.keys():
-        workers_queue_dict.get(key).queue_in.join()
-        w_line_process = workers_queue_dict.get(key).queue_out.get()
+    for value in workers_queue_dict.values():
+        # value.queue_in.join()
+        w_line_process = value.queue_out.get()
         processed += w_line_process[0]
         errors += w_line_process[1]
 
@@ -244,10 +245,10 @@ if __name__ == '__main__':
     op.add_option("-l", "--log", action="store", default=None)
     op.add_option("--dry", action="store_true", default=False)
     op.add_option("--pattern", action="store", default="./data/*.tsv.gz")
-    op.add_option("--idfa", action="store", default="127.0.0.1:33013")
-    op.add_option("--gaid", action="store", default="127.0.0.1:33014")
-    op.add_option("--adid", action="store", default="127.0.0.1:33015")
-    op.add_option("--dvid", action="store", default="127.0.0.1:33016")
+    op.add_option("--idfa", action="store", default="127.0.0.1 11212")
+    op.add_option("--gaid", action="store", default="127.0.0.1 11212")
+    op.add_option("--adid", action="store", default="127.0.0.1 11213")
+    op.add_option("--dvid", action="store", default="127.0.0.1 11214")
     op.add_option('-w', help='Number of workers', default=None)
     (opts, args) = op.parse_args()
     if not opts.w:
