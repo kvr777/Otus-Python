@@ -53,8 +53,7 @@ def get_packed (appsinstalled):
 
 
 def insert_appsinstalled(memc, packed_dict, dry_run=False):
-    # key = packed_with_key[1]
-    # packed = packed_with_key[0]
+
     memc_addr = memc.servers[0].address
 
     if dry_run:
@@ -190,7 +189,6 @@ def process_file(options, fn):
         workers_queue_dict.get(key).queue_in.put('end')
 
     for value in workers_queue_dict.values():
-        # value.queue_in.join()
         w_line_process = value.queue_out.get()
         processed += w_line_process[0]
         errors += w_line_process[1]
