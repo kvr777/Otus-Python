@@ -24,20 +24,20 @@ import async_timeout
 
 
 LOGGER_FORMAT = '%(asctime)s %(message)s'
-URL_TEMPLATE = "https://hacker-news.firebaseio.com/v0/item/{}.json"
-TOP_STORIES_URL = "https://hacker-news.firebaseio.com/v0/topstories.json"
+URL_TEMPLATE = "https://news.ycombinator.com/item?id={}"
+TOP_STORIES_URL = "https://news.ycombinator.com"
 FETCH_TIMEOUT = 10
 MAXIMUM_FETCHES = 1000
 SITE_DIR = './sites'
 LOG_WITH_DOWNLOADED_NEWS = 'downloaded.txt'
 
 parser = argparse.ArgumentParser(
-    description='Calculate the number of comments of the top stories in HN.')
+    description='Download top stories in HN.')
 parser.add_argument(
     '--period', type=int, default=15, help='Number of seconds between poll')
 parser.add_argument(
-    '--limit', type=int, default=2,
-    help='Number of new stories to calculate comments for')
+    '--limit', type=int, default=5,
+    help='Number of new stories to download')
 parser.add_argument('--verbose', action='store_true', help='Detailed output')
 
 
@@ -46,8 +46,13 @@ log = logging.getLogger()
 log.setLevel(logging.INFO)
 
 
-class BoomException(Exception):
-    pass
+def calculate_nb_of_files(curr_folder):
+    f_mask = '.html'
+    counter = 0
+    for f in os.listdir(curr_folder):
+        if f.endswith(f_mask):
+            counter += 1
+    return counter
 
 
 class URLFetcher():
@@ -57,20 +62,41 @@ class URLFetcher():
     def __init__(self):
         self.fetch_counter = 0
 
-    async def fetch(self, session, url):
+    async def fetch(self, session, url, top=False):
         """Fetch a URL using aiohttp returning parsed JSON response.
         As suggested by the aiohttp docs we reuse the session.
         """
         with async_timeout.timeout(FETCH_TIMEOUT):
             self.fetch_counter += 1
             if self.fetch_counter > MAXIMUM_FETCHES:
-                raise BoomException('BOOM!')
+                raise Exception('Maximum number of fetches exceeded')
 
             async with session.get(url) as response:
-                return await response.json()
+                page = await response.read()
+                soup = Soup(page, 'html.parser')
+                if top:
+                    top_news_list = []
+                    news_rows = soup.find_all('tr', class_='athing')
+                    for news_row in news_rows:
+                        top_news_list.append([news_row['id'], news_row.find('a', class_='storylink')['href']])
+                    return top_news_list
+                else:
+                    comment_rows = soup.find_all('div', class_='comment')
+                    all_links_from_comment = []
+                    for comment in comment_rows:
+                        comment_text = comment.find('span', class_="c00")
+                        if comment_text:
+                            links_from_comment = [a.get('href', None) for a in comment_text.find_all('a')]
+                            if len(links_from_comment):
+                                all_links_from_comment += links_from_comment
+                    # exclude images and refs for reply
+                    list_of_extensions = ('png', 'jpg', 'jpeg', 'gif', 'tiff', 'bmp', 'svg', 'js')
+                    res = [s for s in all_links_from_comment if
+                           not s.endswith(list_of_extensions) and not s.startswith('reply')]
+                    return res
 
 
-def save_page(post_id, url, url_idx):
+async def save_page(post_id, url, url_idx):
     curr_folder = os.path.abspath(os.path.join(SITE_DIR, str(post_id)))
 
     path = os.path.join(curr_folder, str(post_id) + '_' + str(url_idx) + '.html')
@@ -86,116 +112,55 @@ def save_page(post_id, url, url_idx):
     try:
         with open(path, 'w', encoding='utf-8') as f:
             f.write(webContent.decode('utf-8'))
-    except BoomException as e:
+    except Exception as e:
         return print("Error loading content of website: {}".format(e))
 
 
-def find_urls(result_page):
-    res = None
-    text = result_page.get('text', None)
-    if text:
-        html = Soup(text, 'html.parser')
-        res = [a['href'] for a in html.find_all('a')]
-
-        # exclude images
-        list_of_extensions = ('png', 'jpg', 'jpeg', 'gif', 'tiff', 'bmp', 'svg', 'js')
-        res = [s for s in res if not s.endswith(list_of_extensions)]
-
-    return res
-
-def calculate_nb_of_files(curr_folder):
-    f_mask = '.html'
-    counter = 0
-    for f in os.listdir(curr_folder):
-        if f.endswith(f_mask):
-            counter +=1
-    return counter
-
-
-async def save_sites(loop, session, fetcher, post_id, parent_id):
+async def save_sites(loop, session, fetcher, top_news_list):
     """Retrieve data for current post and recursively for all comments.
     """
-    url = URL_TEMPLATE.format(post_id)
-    try:
-        response = await fetcher.fetch(session, url)
-    except BoomException as e:
-        log.debug("Error retrieving post {}: {}".format(post_id, e))
-        raise e
+    post_id = top_news_list[0]
+    top_site_url = top_news_list[1]
+    comments_url = URL_TEMPLATE.format(post_id)
 
-    # base case, there are no response
-    if response is None:
-        return 0
-
-    curr_folder = os.path.abspath(os.path.join(SITE_DIR, str(parent_id)))
+    curr_folder = os.path.abspath(os.path.join(SITE_DIR, str(post_id)))
+    url_array = []
 
     # create directory if is not exist
     if not os.path.exists(curr_folder):
         try:
             os.makedirs(curr_folder)
-            curr_idx = 1
         except OSError as e:
             if e.errno != errno.EEXIST:
                 raise
 
-    if os.path.exists(curr_folder):
-        curr_idx = calculate_nb_of_files(curr_folder)+1
+    curr_files_in_folder = calculate_nb_of_files(curr_folder)
 
-    with open(os.path.join(os.path.abspath(SITE_DIR), LOG_WITH_DOWNLOADED_NEWS), 'r', encoding='utf-8') as dl:
-        content = dl.read()
-        sites = content.split()
+    if not curr_files_in_folder:
+        # get urls from comments
+        try:
+            sites_from_comments = await fetcher.fetch(session, comments_url)
+        except Exception as e:
+            log.debug("Error retrieving post {}: {}".format(post_id, e))
+            raise e
 
-    if str(post_id) not in sites:
+        # add main site to url_list
+        url_array.append(top_site_url)
 
-        # collect all arrays in new or comment
-        url_array = []
+        if len(sites_from_comments):
+            url_array += sites_from_comments
 
-        # collect url of parent site
-        if response.get('url', None):
-            url_array.append(response['url'])
-        else:
-            sites_from_comments = find_urls(response)
-            if sites_from_comments is not None:
-                # looking for urls in comments
-                url_array += find_urls(response)
-
-        if len(url_array):
-            for url in list(set(url_array)):
-                save_page(parent_id, url, curr_idx)
-                curr_idx += 1
-
-        sites.append(str(post_id))
-
-        with open(os.path.join(os.path.abspath(SITE_DIR), LOG_WITH_DOWNLOADED_NEWS), 'w', encoding='utf-8') as dl:
-            [dl.write("%s " % x) for x in sites]
-
-    if 'kids' not in response:
-        return curr_idx
-
-    try:
-        # create recursive tasks for all comments
-        tasks = [asyncio.ensure_future(save_sites(
-            loop, session, fetcher, kid_id, parent_id=parent_id)) for kid_id in response['kids']]
+        tasks = [asyncio.ensure_future(save_page(post_id, url, curr_idx))
+                 for curr_idx, url in enumerate(url_array, start=1)]
 
         # schedule the tasks and retrieve results
         try:
             await asyncio.gather(*tasks)
-        except BoomException as e:
-            log.debug("Error retrieving comments for top stories: {}".format(e))
+        except Exception as e:
+            log.debug("Error retrieving saving new sites: {}".format(e))
             raise
-
-        log.debug('{:^6} > saved {} sites'.format(post_id, curr_idx))
-
-        return curr_idx
-
-    except asyncio.CancelledError:
-        if tasks:
-            log.info("Comments for post {} cancelled, cancelling {} child tasks".format(
-                post_id, len(tasks)))
-            for task in tasks:
-                task.cancel()
-        else:
-            log.info("Comments for post {} cancelled".format(post_id))
-        raise
+        return len(url_array)
+    return curr_files_in_folder
 
 
 async def get_top_stories(loop, session, limit, iteration):
@@ -203,19 +168,16 @@ async def get_top_stories(loop, session, limit, iteration):
     """
     fetcher = URLFetcher()  # create a new fetcher for this task
     try:
-        response = await fetcher.fetch(session, TOP_STORIES_URL)
-    except BoomException as e:
+        response = await fetcher.fetch(session, TOP_STORIES_URL, top=True)
+    except Exception as e:
         log.error("Error retrieving top stories: {}".format(e))
         # return instead of re-raising as it will go unnoticed
-        return
-    except Exception as e:  # catch generic exceptions
-        log.error("Unexpected exception: {}".format(e))
         return
 
     tasks = {
         asyncio.ensure_future(
-            save_sites(loop, session, fetcher, post_id, parent_id=post_id)
-        ): post_id for post_id in response[:limit]}
+            save_sites(loop, session, fetcher, top_news_list)
+        ): top_news_list for top_news_list in response[:limit]}
 
     # return on first exception to cancel any pending tasks
     done, pending = await asyncio.shield(asyncio.wait(
@@ -231,8 +193,8 @@ async def get_top_stories(loop, session, limit, iteration):
         # if an exception is raised one of the Tasks will raise
         try:
             print("Post {} has {} saved sites ({})".format(
-                tasks[done_task], done_task.result(), iteration))
-        except BoomException as e:
+                tasks[done_task][0], done_task.result(), iteration))
+        except Exception as e:
             print("Error retrieving top stories: {}".format(e))
 
     return fetcher.fetch_counter
@@ -259,15 +221,12 @@ async def poll_top_stories(loop, session, period, limit):
         def callback(fut, errors):
             try:
                 fetch_count = fut.result()
-            except BoomException as e:
-                log.debug('Adding {} to errors'.format(e))
-                errors.append(e)
             except Exception as e:
-                log.exception('Unexpected error')
+                log.debug('Adding {} to errors'.format(e))
                 errors.append(e)
             else:
                 log.info(
-                    '> Calculating comments took {:.2f} seconds and {} fetches'.format(
+                    '> Process to save news took {:.2f} seconds and {} fetches'.format(
                         (datetime.now() - now).total_seconds(), fetch_count))
 
         future.add_done_callback(partial(callback, errors=errors))
