@@ -14,13 +14,13 @@ import ssl
 from bs4 import BeautifulSoup as Soup
 from urllib.request import urlopen, Request
 
-from functools import partial
 from datetime import datetime
 
 from concurrent.futures import FIRST_EXCEPTION
 
 import aiohttp
 import async_timeout
+from concurrent.futures import ThreadPoolExecutor
 
 
 LOGGER_FORMAT = '%(asctime)s %(message)s'
@@ -30,13 +30,16 @@ FETCH_TIMEOUT = 10
 MAXIMUM_FETCHES = 1000
 SITE_DIR = './sites'
 LOG_WITH_DOWNLOADED_NEWS = 'downloaded.txt'
+EXTENSION_NOT_SAVE = ('png', 'jpg', 'jpeg', 'gif', 'tiff', 'bmp', 'svg', 'js')
+NB_WORKERS_FOR_SITE_SAVING = 30
+
 
 parser = argparse.ArgumentParser(
     description='Download top stories in HN.')
 parser.add_argument(
-    '--period', type=int, default=15, help='Number of seconds between poll')
+    '--period', type=int, default=10, help='Number of seconds between poll')
 parser.add_argument(
-    '--limit', type=int, default=5,
+    '--limit', type=int, default=30,
     help='Number of new stories to download')
 parser.add_argument('--verbose', action='store_true', help='Detailed output')
 
@@ -53,6 +56,29 @@ def calculate_nb_of_files(curr_folder):
         if f.endswith(f_mask):
             counter += 1
     return counter
+
+
+def parse_page(page, top=False):
+    soup = Soup(page, 'html.parser')
+    if top:
+        top_news_list = []
+        news_rows = soup.find_all('tr', class_='athing')
+        for news_row in news_rows:
+            top_news_list.append([news_row['id'], news_row.find('a', class_='storylink')['href']])
+        return top_news_list
+    else:
+        comment_rows = soup.find_all('div', class_='comment')
+        all_links_from_comment = []
+        for comment in comment_rows:
+            comment_text = comment.find('span', class_="c00")
+            if comment_text:
+                links_from_comment = [a.get('href', None) for a in comment_text.find_all('a')]
+                if len(links_from_comment):
+                    all_links_from_comment += links_from_comment
+        # exclude images and refs for reply
+        res = [s for s in all_links_from_comment if
+               not s.endswith(EXTENSION_NOT_SAVE) and not s.startswith('reply')]
+        return res
 
 
 class URLFetcher():
@@ -73,27 +99,7 @@ class URLFetcher():
 
             async with session.get(url) as response:
                 page = await response.read()
-                soup = Soup(page, 'html.parser')
-                if top:
-                    top_news_list = []
-                    news_rows = soup.find_all('tr', class_='athing')
-                    for news_row in news_rows:
-                        top_news_list.append([news_row['id'], news_row.find('a', class_='storylink')['href']])
-                    return top_news_list
-                else:
-                    comment_rows = soup.find_all('div', class_='comment')
-                    all_links_from_comment = []
-                    for comment in comment_rows:
-                        comment_text = comment.find('span', class_="c00")
-                        if comment_text:
-                            links_from_comment = [a.get('href', None) for a in comment_text.find_all('a')]
-                            if len(links_from_comment):
-                                all_links_from_comment += links_from_comment
-                    # exclude images and refs for reply
-                    list_of_extensions = ('png', 'jpg', 'jpeg', 'gif', 'tiff', 'bmp', 'svg', 'js')
-                    res = [s for s in all_links_from_comment if
-                           not s.endswith(list_of_extensions) and not s.startswith('reply')]
-                    return res
+                return parse_page(page, top)
 
 
 async def save_page(post_id, url, url_idx):
@@ -116,7 +122,7 @@ async def save_page(post_id, url, url_idx):
         return print("Error loading content of website: {}".format(e))
 
 
-async def save_sites(loop, session, fetcher, top_news_list):
+async def save_sites(session, fetcher, top_news_list):
     """Retrieve data for current post and recursively for all comments.
     """
     post_id = top_news_list[0]
@@ -153,9 +159,11 @@ async def save_sites(loop, session, fetcher, top_news_list):
         tasks = [asyncio.ensure_future(save_page(post_id, url, curr_idx))
                  for curr_idx, url in enumerate(url_array, start=1)]
 
+
         # schedule the tasks and retrieve results
         try:
-            await asyncio.gather(*tasks)
+            # await asyncio.gather(*tasks)
+            await loop.run_in_executor(p, *tasks)
         except Exception as e:
             log.debug("Error retrieving saving new sites: {}".format(e))
             raise
@@ -163,7 +171,7 @@ async def save_sites(loop, session, fetcher, top_news_list):
     return curr_files_in_folder
 
 
-async def get_top_stories(loop, session, limit, iteration):
+async def get_top_stories(session, limit, iteration):
     """Retrieve top stories in HN.
     """
     fetcher = URLFetcher()  # create a new fetcher for this task
@@ -176,7 +184,7 @@ async def get_top_stories(loop, session, limit, iteration):
 
     tasks = {
         asyncio.ensure_future(
-            save_sites(loop, session, fetcher, top_news_list)
+            save_sites(session, fetcher, top_news_list)
         ): top_news_list for top_news_list in response[:limit]}
 
     # return on first exception to cancel any pending tasks
@@ -200,7 +208,7 @@ async def get_top_stories(loop, session, limit, iteration):
     return fetcher.fetch_counter
 
 
-async def poll_top_stories(loop, session, period, limit):
+async def poll_top_stories(session, period, limit):
     """Periodically poll for new stories and retrieve sites
     """
     iteration = 1
@@ -214,22 +222,22 @@ async def poll_top_stories(loop, session, period, limit):
             limit, iteration))
 
         future = asyncio.ensure_future(
-            get_top_stories(loop, session, limit, iteration))
+            get_top_stories(session, limit, iteration))
 
         now = datetime.now()
 
-        def callback(fut, errors):
+        def callback(fut):
             try:
                 fetch_count = fut.result()
             except Exception as e:
                 log.debug('Adding {} to errors'.format(e))
-                errors.append(e)
+
             else:
                 log.info(
                     '> Process to save news took {:.2f} seconds and {} fetches'.format(
                         (datetime.now() - now).total_seconds(), fetch_count))
 
-        future.add_done_callback(partial(callback, errors=errors))
+        future.add_done_callback(callback)
 
         log.info("Waiting for {} seconds...".format(period))
         iteration += 1
@@ -238,7 +246,7 @@ async def poll_top_stories(loop, session, period, limit):
 
 async def main(args, lp):
     async with aiohttp.ClientSession(loop=lp) as session:
-        await poll_top_stories(lp, session, args.period, args.limit)
+        await poll_top_stories(session, args.period, args.limit)
 
 if __name__ == '__main__':
     args = parser.parse_args()
@@ -246,4 +254,5 @@ if __name__ == '__main__':
         log.setLevel(logging.DEBUG)
 
     loop = asyncio.get_event_loop()
+    p = ThreadPoolExecutor(int(NB_WORKERS_FOR_SITE_SAVING))
     loop.run_until_complete(main(args, loop))
