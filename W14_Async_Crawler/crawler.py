@@ -32,21 +32,7 @@ SITE_DIR = './sites'
 LOG_WITH_DOWNLOADED_NEWS = 'downloaded.txt'
 EXTENSION_NOT_SAVE = ('png', 'jpg', 'jpeg', 'gif', 'tiff', 'bmp', 'svg', 'js')
 NB_WORKERS_FOR_SITE_SAVING = 30
-
-
-parser = argparse.ArgumentParser(
-    description='Download top stories in HN.')
-parser.add_argument(
-    '--period', type=int, default=10, help='Number of seconds between poll')
-parser.add_argument(
-    '--limit', type=int, default=30,
-    help='Number of new stories to download')
-parser.add_argument('--verbose', action='store_true', help='Detailed output')
-
-
-logging.basicConfig(format=LOGGER_FORMAT, datefmt='[%H:%M:%S]')
-log = logging.getLogger()
-log.setLevel(logging.INFO)
+THREAD_POOL = ThreadPoolExecutor(int(NB_WORKERS_FOR_SITE_SAVING))
 
 
 def calculate_nb_of_files(curr_folder):
@@ -116,8 +102,8 @@ async def save_page(post_id, url, url_idx):
     webContent = response.read()
 
     try:
-        with open(path, 'w', encoding='utf-8') as f:
-            f.write(webContent.decode('utf-8'))
+        with open(path, 'wb') as f:
+            f.write(webContent)
     except Exception as e:
         return print("Error loading content of website: {}".format(e))
 
@@ -163,7 +149,7 @@ async def save_sites(session, fetcher, top_news_list):
         # schedule the tasks and retrieve results
         try:
             # await asyncio.gather(*tasks)
-            await loop.run_in_executor(p, *tasks)
+            await loop.run_in_executor(THREAD_POOL, *tasks)
         except Exception as e:
             log.debug("Error retrieving saving new sites: {}".format(e))
             raise
@@ -249,10 +235,23 @@ async def main(args, lp):
         await poll_top_stories(session, args.period, args.limit)
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(
+        description='Download top stories in HN.')
+    parser.add_argument(
+        '--period', type=int, default=10, help='Number of seconds between poll')
+    parser.add_argument(
+        '--limit', type=int, default=30,
+        help='Number of new stories to download')
+    parser.add_argument('--verbose', action='store_true', help='Detailed output')
+
     args = parser.parse_args()
+
+    logging.basicConfig(format=LOGGER_FORMAT, datefmt='[%H:%M:%S]')
+    log = logging.getLogger()
+    log.setLevel(logging.INFO)
+
     if args.verbose:
         log.setLevel(logging.DEBUG)
 
     loop = asyncio.get_event_loop()
-    p = ThreadPoolExecutor(int(NB_WORKERS_FOR_SITE_SAVING))
     loop.run_until_complete(main(args, loop))
