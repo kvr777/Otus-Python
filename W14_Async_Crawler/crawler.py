@@ -78,7 +78,7 @@ class URLFetcher():
         """Fetch a URL using aiohttp returning parsed JSON response.
         As suggested by the aiohttp docs we reuse the session.
         """
-        with async_timeout.timeout(FETCH_TIMEOUT):
+        async with async_timeout.timeout(FETCH_TIMEOUT):
             self.fetch_counter += 1
             if self.fetch_counter > MAXIMUM_FETCHES:
                 raise Exception('Maximum number of fetches exceeded')
@@ -88,7 +88,7 @@ class URLFetcher():
                 return parse_page(page, top)
 
 
-async def save_page(post_id, url, url_idx):
+def save_page(post_id, url, url_idx):
     curr_folder = os.path.abspath(os.path.join(SITE_DIR, str(post_id)))
 
     path = os.path.join(curr_folder, str(post_id) + '_' + str(url_idx) + '.html')
@@ -137,19 +137,22 @@ async def save_sites(session, fetcher, top_news_list):
             raise e
 
         # add main site to url_list
-        url_array.append(top_site_url)
+        if str(top_site_url).startswith('item?id'):
+            url_array.append(URL_TEMPLATE.format(post_id))
+        else:
+            url_array.append(top_site_url)
 
         if len(sites_from_comments):
             url_array += sites_from_comments
 
-        tasks = [asyncio.ensure_future(save_page(post_id, url, curr_idx))
+        # print(url_array)
+        tasks_comments = [loop.run_in_executor(THREAD_POOL, save_page, post_id, url, curr_idx)
                  for curr_idx, url in enumerate(url_array, start=1)]
-
 
         # schedule the tasks and retrieve results
         try:
-            # await asyncio.gather(*tasks)
-            await loop.run_in_executor(THREAD_POOL, *tasks)
+            if tasks_comments:
+                await asyncio.gather(*tasks_comments)
         except Exception as e:
             log.debug("Error retrieving saving new sites: {}".format(e))
             raise
@@ -164,7 +167,7 @@ async def get_top_stories(session, limit, iteration):
     try:
         response = await fetcher.fetch(session, TOP_STORIES_URL, top=True)
     except Exception as e:
-        log.error("Error retrieving top stories: {}".format(e))
+        log.error("Error retrieving top stories while fetching: {}".format(e))
         # return instead of re-raising as it will go unnoticed
         return
 
@@ -174,8 +177,8 @@ async def get_top_stories(session, limit, iteration):
         ): top_news_list for top_news_list in response[:limit]}
 
     # return on first exception to cancel any pending tasks
-    done, pending = await asyncio.shield(asyncio.wait(
-        tasks.keys(), return_when=FIRST_EXCEPTION))
+    done, pending = asyncio.wait(
+        tasks.keys(), return_when='ALL_COMPLETED')
 
     # if there are pending tasks is because there was an exception
     # cancel any pending tasks
@@ -189,7 +192,7 @@ async def get_top_stories(session, limit, iteration):
             print("Post {} has {} saved sites ({})".format(
                 tasks[done_task][0], done_task.result(), iteration))
         except Exception as e:
-            print("Error retrieving top stories: {}".format(e))
+            print("Error while printing results about retrieving top stories: {}".format(e))
 
     return fetcher.fetch_counter
 
