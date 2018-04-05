@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/golang/protobuf/proto"
-	"github.com/stretchr/testify/assert"
 	"log"
 	"os"
 	"path/filepath"
@@ -31,49 +30,72 @@ type AppsInstalled struct {
 	apps     []uint32
 }
 
-//type result struct {
-//	processed  int16
-//	errors  int16
-//}
-
-func assertEqual(a interface{}, b interface{}) {
-	if assert.ObjectsAreEqual(a, b) == false {
-		log.Println("ERROR", a, " != ", b, " \r\n")
-		return
-	}
-	log.Println("INFO Test for equality successfuly passed", " \r\n")
-	return
-
+type Options struct {
+	test     bool
+	log_file string
+	dry      bool
+	pattern  string
+	idfa     string
+	gaid     string
+	adid     string
+	dvid     string
 }
 
-func dot_rename(path string) error {
+type WResult struct {
+	processed int
+	errors    int
+}
+
+//func assertEqual(a interface{}, b interface{}) {
+//	if assert.ObjectsAreEqual(a, b) == false {
+//		log.Println("ERROR", a, " != ", b, " \r\n")
+//		return
+//	}
+//	log.Println("INFO Test for equality successfuly passed", " \r\n")
+//	return
+//}
+
+func DotRename(path string) error {
 	head, old_fn := filepath.Split(path)
 	// atomic in most cases
 	err := os.Rename(path, filepath.Join(head, "."+old_fn))
 	return err
 }
 
-func insert_appsinstalled(mc *memcache.Client, appsinstld *AppsInstalled, dry_run bool) bool {
-	ua := &appsinstalled.UserApps{}
-	ua.Lat = proto.Float64(appsinstld.lat)
-	ua.Lon = proto.Float64(appsinstld.lon)
-	ua.Apps = appsinstld.apps
-	key := fmt.Sprintf("%s:%s", appsinstld.dev_type, appsinstld.dev_id)
-	packed, _ := proto.Marshal(ua)
-	if dry_run {
-		log.Println("DEBUG %s- %s-> %s", "memc_addr", key,
-			strings.Replace(ua.String(), "\n", " ", -1))
-	} else {
-		err := mc.Set(&memcache.Item{Key: key, Value: packed})
-		if err != nil {
-			log.Printf("Cannot write to memc %v: %v", "server", err)
-			return false
+func InsertAppsinstalled(appsinstld_lines <-chan *AppsInstalled, res_chain chan<- WResult,
+	mc *memcache.Client, dry_run bool, wg *sync.WaitGroup) {
+	defer wg.Done()
+	var w_processed, w_errors int = 0, 0
+
+	for appsinstld := range appsinstld_lines {
+
+		ua := &appsinstalled.UserApps{}
+		ua.Lat = proto.Float64(appsinstld.lat)
+		ua.Lon = proto.Float64(appsinstld.lon)
+		ua.Apps = appsinstld.apps
+		key := fmt.Sprintf("%s:%s", appsinstld.dev_type, appsinstld.dev_id)
+		packed, _ := proto.Marshal(ua)
+		if dry_run {
+			log.Println("DEBUG %s- %s-> %s", "memc_addr", key,
+				strings.Replace(ua.String(), "\n", " ", -1))
+		} else {
+			err := mc.Set(&memcache.Item{Key: key, Value: packed})
+			if err != nil {
+				log.Printf("Cannot write to memc %v: %v", "server", err)
+				w_errors += 1
+			}
 		}
+		w_processed += 1
+
 	}
-	return true
+
+	res_chain <- WResult{
+		processed: w_processed,
+		errors:    w_errors,
+	}
 }
 
-func parse_appsinstalled(line string) (*AppsInstalled, error) {
+func ParseAppsinstalled(line string) (*AppsInstalled, error) {
 	line_parts := strings.Split(strings.TrimSpace(line), "\t")
 	if len(line_parts) != 5 {
 		return nil, errors.New("Quantity of args is not valid")
@@ -118,10 +140,9 @@ func parse_appsinstalled(line string) (*AppsInstalled, error) {
 	return res, nil
 }
 
-func process_one_file(fn string, device_memc map[string]interface{},
+func ProcessOneFile(fn string, device_memc map[string]string,
 	memc_servers map[string]*memcache.Client, dry bool) error {
-	processed := 0
-	ln_errors := 0
+	var processed, ln_errors int = 0, 0
 	fn, _ = filepath.Abs(filepath.Join("./", fn))
 	log.Println("INFO Processing: ", fn)
 
@@ -140,6 +161,17 @@ func process_one_file(fn string, device_memc map[string]interface{},
 	}
 	defer fz.Close()
 
+	var wg1 sync.WaitGroup
+
+	res_chain := make(chan WResult)
+	memc_chans := make(map[string]chan *AppsInstalled)
+
+	for k, _ := range device_memc {
+		memc_chans[k] = make(chan *AppsInstalled)
+		wg1.Add(1)
+		go InsertAppsinstalled(memc_chans[k], res_chain, memc_servers[k], dry, &wg1)
+	}
+
 	cr := bufio.NewScanner(fz)
 	for cr.Scan() {
 		line := strings.TrimSpace(cr.Text())
@@ -147,80 +179,74 @@ func process_one_file(fn string, device_memc map[string]interface{},
 			continue
 		}
 
-		appsinstld, err := parse_appsinstalled(line)
+		appsinstld, err := ParseAppsinstalled(line)
 
 		if err != nil {
-			ln_errors += ln_errors
+			ln_errors += 1
 			continue
 		}
 
 		memc_addr := device_memc[appsinstld.dev_type]
 
-		if memc_addr == 0 {
-			ln_errors += ln_errors
+		if len(memc_addr) == 0 {
+			ln_errors += 1
 			log.Println("ERROR Unknow device type: ", appsinstld.dev_type)
 			continue
 		}
 
-		ok := insert_appsinstalled(memc_servers[appsinstld.dev_type], appsinstld, dry)
+		memc_chans[appsinstld.dev_type] <- appsinstld
 
-		if ok {
-			processed += 1
-		} else {
-			ln_errors += 1
-		}
 	}
-	//fmt.Println(processed)
+
+	for k, v := range memc_chans {
+		close(v)
+		w_result := <-res_chain
+		log.Printf("Type %v Processed %v, errors %v", k, w_result.processed, w_result.errors)
+		processed += w_result.processed
+		ln_errors += w_result.errors
+
+	}
+
+	wg1.Wait()
+
 	err_rate := float64(ln_errors) / float64(processed)
 
 	if err_rate < NORMAL_ERR_RATE {
-		log.Printf("INFO Acceptable error rate (%v). Successfull load ", err_rate)
+		log.Printf("INFO Acceptable error rate (%v). Successfull load ", err_rate, processed)
 	} else {
 		log.Printf("ERROR High error rate (%v > %v). Failed load ", err_rate, NORMAL_ERR_RATE)
 	}
 	return nil
 }
 
-func process_file_and_rename(fn string, device_memc map[string]interface{},
-	memc_servers map[string]*memcache.Client, dry bool) error {
-	process_one_file(fn, device_memc, memc_servers, dry)
-	err := dot_rename(fn)
-	return err
-}
-
-func digester(done <-chan struct{}, paths <-chan string, c chan<- error,
-	device_memc map[string]interface{}, memc_servers map[string]*memcache.Client, dry bool) {
+func Digester(paths <-chan string, c chan<- error,
+	device_memc map[string]string, memc_servers map[string]*memcache.Client, dry bool) {
 	for fn := range paths {
-		res := process_file_and_rename(fn, device_memc, memc_servers, dry)
-		select {
-		case c <- res:
-		case <-done:
-			return
-		}
+		ProcessOneFile(fn, device_memc, memc_servers, dry)
+		err := DotRename(fn)
+		c <- err
 	}
 }
 
-func main_func(opts map[string]interface{}) error {
+func ProcessFiles(opts *Options) error {
 
-	device_memc := map[string]interface{}{
-		"idfa": opts["idfa"],
-		"gaid": opts["gaid"],
-		"adid": opts["adid"],
-		"dvid": opts["dvid"],
+	device_memc := map[string]string{
+		"idfa": opts.idfa,
+		"gaid": opts.gaid,
+		"adid": opts.adid,
+		"dvid": opts.dvid,
 	}
 
 	memc_servers := make(map[string]*memcache.Client)
 
 	for k, v := range device_memc {
-		mc := memcache.New(v.(string))
+		mc := memcache.New(v)
 		memc_servers[k] = mc
-
 	}
 
-	paths_list, err := filepath.Glob(opts["pattern"].(string))
-	done := make(chan struct{})
+	paths_list, err := filepath.Glob(opts.pattern)
+
 	paths := make(chan string)
-	defer close(done)
 
 	if err != nil {
 		return err
@@ -237,7 +263,7 @@ func main_func(opts map[string]interface{}) error {
 
 	for i := 0; i < numDigesters; i++ {
 		go func() {
-			digester(done, paths, c, device_memc, memc_servers, opts["dry"].(bool))
+			Digester(paths, c, device_memc, memc_servers, opts.dry)
 			wg.Done()
 		}()
 	}
@@ -262,29 +288,29 @@ func main_func(opts map[string]interface{}) error {
 
 func main() {
 
-	test := flag.Bool("t", false, "dry")
-	log_file := flag.String("l", "", "log")
-	dry := flag.Bool("dry", false, "dry")
-	pattern := flag.String("pattern", "./data/*.tsv.gz", "Directory to search the files")
-	idfa := flag.String("idfa", "127.0.0.1:33013", "Address to insert idfa")
-	gaid := flag.String("gaid", "127.0.0.1:33014", "Address to insert gaid")
-	adid := flag.String("adid", "127.0.0.1:33015", "Address to insert adid")
-	dvid := flag.String("dvid", "127.0.0.1:33016", "Address to insert dvid")
+	test_f := flag.Bool("t", false, "dry")
+	log_file_f := flag.String("l", "", "log")
+	dry_f := flag.Bool("dry", false, "dry")
+	pattern_f := flag.String("pattern", "./data/*.tsv.gz", "Directory to search the files")
+	idfa_f := flag.String("idfa", "127.0.0.1:33013", "Address to insert idfa")
+	gaid_f := flag.String("gaid", "127.0.0.1:33014", "Address to insert gaid")
+	adid_f := flag.String("adid", "127.0.0.1:33015", "Address to insert adid")
+	dvid_f := flag.String("dvid", "127.0.0.1:33016", "Address to insert dvid")
 
 	flag.Parse()
 
-	opts := map[string]interface{}{
-		"test":     *test,
-		"log_file": *log_file,
-		"dry":      *dry,
-		"pattern":  *pattern,
-		"idfa":     *idfa,
-		"gaid":     *gaid,
-		"adid":     *adid,
-		"dvid":     *dvid,
+	opts := &Options{
+		test:     *test_f,
+		log_file: *log_file_f,
+		dry:      *dry_f,
+		pattern:  *pattern_f,
+		idfa:     *idfa_f,
+		gaid:     *gaid_f,
+		adid:     *adid_f,
+		dvid:     *dvid_f,
 	}
 
-	if opts["log_file"] != "" {
+	if opts.log_file != "" {
 		f, err := os.OpenFile("opts.log", os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
 		if err != nil {
 			log.Fatal(err)
@@ -294,11 +320,11 @@ func main() {
 		log.SetOutput(f)
 	}
 
-	log.Println("INFO: Memc loader started with options:", opts, " \n")
+	log.Println("INFO: Memc loader started with options:", *opts)
 
-	err := main_func(opts)
+	err := ProcessFiles(opts)
 	if err != nil {
-		log.Fatalf("Unexpected error:", err)
+		log.Fatalf("Unexpected error: ", err)
 		return
 	}
 
