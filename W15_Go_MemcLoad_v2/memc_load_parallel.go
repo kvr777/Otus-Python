@@ -46,14 +46,6 @@ type WResult struct {
 	errors    int
 }
 
-//func assertEqual(a interface{}, b interface{}) {
-//	if assert.ObjectsAreEqual(a, b) == false {
-//		log.Println("ERROR", a, " != ", b, " \r\n")
-//		return
-//	}
-//	log.Println("INFO Test for equality successfuly passed", " \r\n")
-//	return
-//}
 
 func DotRename(path string) error {
 	head, old_fn := filepath.Split(path)
@@ -222,8 +214,9 @@ func ProcessOneFile(fn string, device_memc map[string]string,
 func Digester(paths <-chan string, c chan<- error,
 	device_memc map[string]string, memc_servers map[string]*memcache.Client, dry bool) {
 	for fn := range paths {
-		ProcessOneFile(fn, device_memc, memc_servers, dry)
-		err := DotRename(fn)
+		err:= ProcessOneFile(fn, device_memc, memc_servers, dry)
+		c <- err
+		err = DotRename(fn)
 		c <- err
 	}
 }
