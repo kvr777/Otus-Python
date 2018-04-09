@@ -215,7 +215,10 @@ func Digester(paths <-chan string, c chan<- error,
 	device_memc map[string]string, memc_servers map[string]*memcache.Client, dry bool) {
 	for fn := range paths {
 		err:= ProcessOneFile(fn, device_memc, memc_servers, dry)
-		c <- err
+		if err != nil {
+			c <- err
+			continue
+		}
 		err = DotRename(fn)
 		c <- err
 	}
