@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+
+{% block main %}
+{% for question in question_list  %}
+<div class="row">
+    <div class="col-lg-12">
+        <hr>
+    </div>
+</div>
+<div class="row">
+    <div class="col-lg-3">
+
+        <div class="row">
+            <div class="col-lg-6">
+                <div class="well">
+                    <div class="col text-center">
+                    {{question.total_points}}
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-6">
+                <div class="well">
+                    <div class="col text-center">
+                        {{question.answer_set.count}}
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="row">
+            <div class="col-lg-6">
+                <div class="well">
+                    <div class="col text-center">
+                        Votes
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-6">
+                <div class="well">
+                    Answers
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-6">
+        <h6>
+            <a class="text-dark" href="{{ question.get_absolute_url }}" >
+                {{ question.title }}
+            </a>
+        </h6>
+        Tags:
+          {% for tag in question.get_tag_list %}
+            <a href="{% url 'question_search_list_view' %}?q=tag:{{ tag }}" style="background-color: peachpuff">
+                {{ tag }}
+            </a>
+            {% if not forloop.last %}, {% endif %}
+          {% endfor %}
+
+    </div>
+    <div class="col-lg-3">
+        <div class="row">
+            <div class="col text-center">
+                    <a class="mx-auto">
+                        {{question.author}}
+                    </a>
+            </div>
+        </div>
+        <div class="row">
+            <div class="col-lg-12">
+                <div class="well">
+                    asked: {{ question.get_date }}
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+    {% empty %}
+      <div class="alert alert-info text-center">
+          No questions here :(
+      </div>
+{% endfor %}
+
+<div class="row">
+    <div class="col-lg-12">
+        <hr>
+    </div>
+</div>
+
+{% if is_paginated %}
+  <ul class="pagination">
+    {% if page_obj.has_previous %}
+      <li class="page-item">
+          <a class="page-link" href="?page={{ page_obj.previous_page_number }}" aria-label="Previous">&laquo;</a>
+      </li>
+    {% else %}
+      <li class="disabled">
+          <a class="page-link" aria-label="Previous">
+              <span aria-hidden="true">&laquo;</span>
+              <span class="sr-only">Previous</span>
+          </a>
+      </li>
+    {% endif %}
+    {% for i in paginator.page_range %}
+      {% if page_obj.number == i %}
+        <li class="active">
+            <a class="page-link" aria-label="Previous">
+                <span>{{ i }}
+                    <span class="sr-only">(current)</span>
+                </span>
+            </a>
+        </li>
+      {% else %}
+        <li class="page-item">
+            <a class="page-link" href="?page={{ i }}">{{ i }}</a>
+        </li>
+      {% endif %}
+    {% endfor %}
+    {% if page_obj.has_next %}
+      <li class="page-item">
+          <a class="page-link" href="?page={{ page_obj.next_page_number }}">&raquo;</a>
+      </li>
+    {% else %}
+      <li class="disabled">
+          <a class="page-link" aria-label="Next">
+              <span aria-hidden="true">&raquo;</span>
+              <span class="sr-only">Next</span>
+          </a>
+      </li>
+    {% endif %}
+  </ul>
+{% endif %}
+
+{% endblock %}

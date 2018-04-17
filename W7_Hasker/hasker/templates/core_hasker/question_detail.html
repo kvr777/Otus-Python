@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+{% block subtitle %}Question detail{% endblock %}
+{% load static %}
+{% load widget_tweaks %}
+
+{% block main %}
+
+
+<div class="row">
+    <div class="col-lg-2">
+
+        {% if user.is_authenticated and user != question_detail.author %}
+        <form action="{% url 'question_vote' question_detail.id %}" method="POST">
+          {% csrf_token %}
+          <input type="hidden" name="upvote" value="on">
+          <input type="hidden" name="next" value="{{ request.path }}">
+          <input type="image" type="submit" src = "{% static 'site_img/vote-up-off.png' %}" title="Vote this question UP. (click again to undo)"></button>
+        </form>
+        {% else %}
+        <br>
+        <br>
+        {% endif %}
+        <h3 style="color:#808080"><a class="invisible">..</a><span>{{question_detail.total_points}}</span></h3>
+
+        {% if user.is_authenticated and user != question_detail.author %}
+        <form action="{% url 'question_vote' question_detail.id %}" method="POST">
+          {% csrf_token %}
+          <input type="hidden" name="next" value="{{ request.path }}">
+          <input type="image" type="submit" src = "{% static 'site_img/vote-down-off.png' %}"button type="submit"  data-placement="bottom" title="Vote this question DOWN if it is innapropriate or incorrect. (click again to undo)"></button>
+        </form>
+        {% endif %}
+    </div>
+
+    <div class="col-lg-10">
+        <br>
+        <h4>
+            <a class="text-dark">
+                {{ question_detail.title }}
+                <br>
+            </a>
+        </h4>
+        <p>{{question_detail.question_text}}</p>
+    </div>
+</div>
+<div class="row">
+    <div class="col-lg-2">
+    </div>
+    <div class="col-lg-5">
+        Tags:
+          {% for tag in question_detail.get_tag_list %}
+            <a href="{% url 'question_search_list_view' %}?q=tag:{{ tag }}" style="background-color: peachpuff">
+                {{ tag }}
+            </a>{% if not forloop.last %}, {% endif %}
+          {% endfor %}
+    </div>
+    <div class="col-lg-5" align="right">
+        <img src="{{question_detail.author.avatar.url}}" height="40">
+        <a class="invisible">...</a>
+        <a>{{question_detail.author.login}}</a>
+        <a class="invisible">........</a>
+    </div>
+
+</div>
+<div class="row">
+    <div class="col-lg-12">
+        <hr>
+    </div>
+</div>
+
+
+{% for answer in question_detail.answer_set.all|dictsortreversed:'total_points'|dictsortreversed:'created_at' %}
+<div class="row">
+    <div class="col-lg-2">
+        {% if user.is_authenticated and user != answer.author %}
+        <form action="{% url 'answer_vote' answer.id %}" method="POST">
+          {% csrf_token %}
+          <input type="hidden" name="next" value="{{ request.path }}">
+          <input type="hidden" name="upvote" value="on">
+          <input type="image" type="submit" src = "{% static 'site_img/vote-up-off.png' %}" title="Vote this answer UP. (click again to undo)"></button>
+        </form>
+        {% else %}
+        <br>
+        <br>
+        {% endif %}
+        <h3 style="color:#808080"><a class="invisible">..</a><span>{{answer.total_points}}</span></h3>
+
+        {% if user.is_authenticated and user != answer.author %}
+        <form action="{% url 'answer_vote' answer.id %}" method="POST">
+          {% csrf_token %}
+          <input type="hidden" name="next" value="{{ request.path }}">
+          <input type="image" type="submit" src = "{% static 'site_img/vote-down-off.png' %}"button type="submit"  data-placement="bottom" title="Vote this answer DOWN if it is innapropriate or incorrect. (click again to undo)"></button>
+        </form>
+        {% endif %}
+    </div>
+
+    <div class="col-lg-10">
+        <br>
+        <p>{{answer.answer_text}}</p>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-lg-2">
+    </div>
+    <div class="col-lg-5">
+    </div>
+    <div class="col-lg-5" align="right">
+        <img src="{{answer.author.avatar.url}}" height="40">
+        <a class="invisible">...</a>
+        <a>{{answer.author.login}}</a>
+        <a class="invisible">........</a>
+    </div>
+
+</div>
+
+<div class="row">
+    <div class="col-lg-12">
+        <hr>
+    </div>
+</div>
+
+{% endfor %}
+
+{% if user.is_authenticated %}
+<div class="row">
+    <div class="col-lg-2"> </div>
+
+    <div class="col-lg-10">
+
+    <h3>Your answer:</h3>
+
+        <form id="answer-form" action="{% url 'add_answer' slug=question_detail.slug %}" onsubmit="editor.post();" method="POST">
+           {% csrf_token %}
+
+        {% for hidden in form.hidden_fields %}
+          {{ hidden }}
+        {% endfor %}
+
+        {% for field in form.visible_fields %}
+          <div class="form-group">
+            <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+            {{ field|add_class:'form-control' }}
+            {% for error in field.errors %}
+              <span class="help-block">{{ error }}</span>
+            {% endfor %}
+          </div>
+        {% endfor %}
+
+        {% if form.errors %}
+            {% for field in form %}
+                {% for error in field.errors %}
+                    <div class="alert alert-danger">
+                        <strong>{{ error|escape }}</strong>
+                    </div>
+                {% endfor %}
+            {% endfor %}
+            {% for error in form.non_field_errors %}
+                <div class="alert alert-danger">
+                    <strong>{{ error|escape }}</strong>
+                </div>
+            {% endfor %}
+        {% endif %}
+
+
+
+        <div class="form-group">
+          <button type="submit" class="btn btn-success">
+            <span class="glyphicon glyphicon-ok"></span> Add Answer
+          </button>
+        </div>
+        </form>
+    </div>
+</div>
+{% endif %}
+
+{% endblock %}
+

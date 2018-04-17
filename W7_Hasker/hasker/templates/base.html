@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+{% load static %}
+
+
+<html>
+    <head>
+        <meta charset="utf-8" />
+        <!-- Bootstrap core CSS -->
+        <link href="https://getbootstrap.com/dist/css/bootstrap.min.css" rel="stylesheet">
+
+        <!-- Custom styles for this template -->
+        <link href="https://fonts.googleapis.com/css?family=Playfair+Display:700,900" rel="stylesheet">
+        <link href="https://getbootstrap.com/docs/4.0/examples/blog/blog.css" rel="stylesheet">
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.3.1/jquery.min.js"></script>
+        <title> {% block head_title %} Hasker: Poor Man's Stackoverflow {% endblock head_title %}</title>
+    </head>
+
+    <body>
+        <div class="container">
+            <header class="blog-header py-3" style="background-color: darkcyan">
+                <div class="row flex-nowrap justify-content-between align-items-center">
+
+                    <div class="col-6 text-left" >
+                        <a class="invisible">...</a>
+                        <a class="blog-header-logo" style="color: white", href="{%url 'question_list' %}">
+                           Poor Man's Stackoverflow
+                        </a>
+
+                    </div>
+                    <div class="col-3">
+                        <form id="searchform" action="{% url 'question_search_list_view' %}" method="get" accept-charset="utf-8">
+                              <!--<button class="searchbutton" type="submit">-->
+                                <!--<i class="fa fa-search"></i>-->
+                              <!--</button>-->
+                              <input style="width:300px;margin-right:50px" type="text" class="input-sm form-control" name="q" placeholder="Search">
+                              <!--<input class="searchfield" id="searchbox" name="q" type="text" placeholder="Search">-->
+                        </form>
+
+                    </div>
+                    <div class="col-3 text-right">
+
+                        {% if user.is_authenticated %}
+                        <img src="{{user.avatar.url}}" height="40">
+                        <a class="invisible">...</a> <a style="color: white" href="{% url 'user_profile' user.login %}">{{user.login}}</a>
+                        <a class="invisible">...</a>
+                        <a href="{% url 'logout' %}" class="btn btn-outline-warning"> Log out</a>
+                        <a class="invisible">.</a>
+                        {% else %}
+
+
+                        <a href="{% url 'login' %}" class="btn btn-outline-light">Log in</a>
+                        <a class="invisible">...</a>
+                        <a href="{% url 'signup' %}" class="btn btn-outline-warning"> Sign Up </a>
+                        <a class="invisible">.</a>
+                        {% endif%}
+                    </div>
+                </div>
+            </header>
+            <br>
+
+        </div>
+
+
+        <main role="main" class="container">
+            <div class="row">
+                <div class="col-lg-8 blog-main">
+                    <h3 class="mb-0">
+                        <a class="text-dark">{% block subtitle %}New questions{% endblock %}</a>
+                    </h3>
+                    <br>
+                    <div class="blog-post">
+                        {% block main %}{% endblock %}
+                    </div>
+                </div>
+
+
+                <aside class="col-lg-4 blog-sidebar">
+                  {% block sidebar %}
+                    {% if user.is_authenticated %}
+                    <a class="btn btn-success" href="{% url 'new_question' %}" role="button">Ask question</a>
+                    <br><br>
+                    {% endif %}
+                    <h3 class="mb-0">Trending</h3>
+                    <br>
+
+                        {% for question in question_list|dictsortreversed:"created_at"|dictsortreversed:"total_points" %}
+                            {% if forloop.counter0 < 5 %}
+
+                            <div class="row">
+                                <div class="col-lg-2">
+                                    <div class="well">
+                                        <div class="col text-center" style="background-color: peachpuff">
+                                        {{question.total_points}}
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-lg-10">
+                                    <div class="well">
+
+                                        <div class="col text-left">
+                                            <a class="text-dark" href="{{ question.get_absolute_url }}" >
+                                                {{ question.title }}
+                                            </a>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="row"><br></div>
+
+
+                            {% endif %}
+                        {% endfor %}
+                    <br>
+                  {% endblock %}
+                </aside>
+            </div> <!-- /.row -->
+        </main> <!-- /.container -->
+
+        <!--<footer class="blog-footer" style="position: fixed; bottom: 0;  height: 100px; width: 100%;">-->
+            <!--<p>This site was created as an part of educational Otus python development course</p>-->
+        <!--</footer>-->
+
+         <!-- Bootstrap core JavaScript
+        ================================================== -->
+        <!-- Placed at the end of the document so the pages load faster -->
+        <script src="https://code.jquery.com/jquery-3.2.1.slim.min.js" integrity="sha384-KJ3o2DKtIkvYIK3UENzmM7KCkRr/rE9/Qpg6aAZGJwFDMVNA/GpGFF93hXpG5KkN" crossorigin="anonymous"></script>
+        <script>window.jQuery || document.write('<script src="https://getbootstrap.com/assets/js/vendor/jquery-slim.min.js"><\/script>')</script>
+        <script src="https://getbootstrap.com/assets/js/vendor/popper.min.js"></script>
+        <script src="https://getbootstrap.com/dist/js/bootstrap.min.js"></script>
+        <script src="https://getbootstrap.com/assets/js/vendor/holder.min.js"></script>
+        <script>
+          Holder.addTheme('thumb', {
+            bg: '#55595c',
+            fg: '#eceeef',
+            text: 'Thumbnail'
+          });
+        </script>
+    </body>
+</html>

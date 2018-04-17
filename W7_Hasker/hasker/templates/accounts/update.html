@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+
+{% block subtitle %} Settings {% endblock %}
+
+{% load widget_tweaks %}
+
+{% block main %}
+
+{% load static %}
+
+
+<form class="update" method="POST" enctype="multipart/form-data">
+    {% csrf_token %}
+
+    {% for hidden in form.hidden_fields %}
+      {{ hidden }}
+    {% endfor %}
+
+    {% for field in form.visible_fields %}
+      <div class="form-group">
+        <label>{{ field.label }}</label>
+        {{ field|add_class:'form-control' }}
+        {% for error in field.errors %}
+          <span class="help-block">{{ error }}</span>
+        {% endfor %}
+      </div>
+    {% endfor %}
+
+    <div class="form-group">
+      <img  src="{{form.avatar.value.url}}" height="100" />
+    </div>
+
+    <div class="form-group">
+      <button type="submit" class="btn btn-success">
+        <span class="glyphicon glyphicon-ok"></span> Save
+      </button>
+      <a href="{% url 'question_list' %}" class="btn btn-default">Cancel</a>
+    </div>
+
+
+</form>
+{% endblock %}
